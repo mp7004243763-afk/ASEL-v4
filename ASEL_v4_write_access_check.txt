@@ -1,1 +1,0 @@
-Temporary permission check for the ASEL v4 APK build. This file will be removed.
