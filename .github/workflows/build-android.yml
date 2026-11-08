@@ -53,5 +53,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ASEL-v4-Android-APK
-          path: ASEL_Telegram_Android_IOS/mobile/build/app/outputs/flutter-apk/app-release.apk
+          path: ASEL_Telegram_Android_iOS/mobile/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
