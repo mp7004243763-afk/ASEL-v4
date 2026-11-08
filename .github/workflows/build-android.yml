@@ -5,7 +5,8 @@ on:
   push:
     branches: [main]
     paths:
-      - "ASEL_Telegram_Android_iOS/mobile/**"
+      - "ASEL_Telegram_Android_iOS_v4_memory_calendar.zip"
+      - "ASEL_Telegram_Android_iOS/**"
       - ".github/workflows/build-android.yml"
 
 permissions:
@@ -15,8 +16,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout source
         uses: actions/checkout@v4
+
+      - name: Extract ASEL v4 source archive
+        run: unzip -o ASEL_Telegram_Android_iOS_v4_memory_calendar.zip -d .
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -30,16 +34,19 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Generate Android project files
-        working-directory: ASEL_Telegram_Android_IOS/mobile
-        run: flutter create --platforms=android .
+      - name: Generate Android project files if missing
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: |
+          if [ ! -d android ]; then
+            flutter create --platforms=android .
+          fi
 
       - name: Install dependencies
-        working-directory: ASEL_Telegram_Android_IOS/mobile
+        working-directory: ASEL_Telegram_Android_iOS/mobile
         run: flutter pub get
 
       - name: Build release APK
-        working-directory: ASEL_Telegram_Android_IOS/mobile
+        working-directory: ASEL_Telegram_Android_iOS/mobile
         run: flutter build apk --release
 
       - name: Upload APK
