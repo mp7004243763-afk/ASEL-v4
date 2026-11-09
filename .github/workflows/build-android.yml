@@ -54,7 +54,7 @@ jobs:
               application_tag = '    <application'
               if application_tag not in content:
                   raise SystemExit("Could not find <application> in AndroidManifest.xml")
-              content = content.replace(application_tag, permission + "\\n" + application_tag, 1)
+              content = content.replace(application_tag, permission + "\n" + application_tag, 1)
               manifest.write_text(content)
           print("Android INTERNET permission is present.")
           PY
