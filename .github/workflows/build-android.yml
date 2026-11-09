@@ -41,6 +41,24 @@ jobs:
             flutter create --platforms=android .
           fi
 
+      - name: Ensure Android Internet permission
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          content = manifest.read_text()
+          permission = '    <uses-permission android:name="android.permission.INTERNET" />'
+          if permission not in content:
+              application_tag = '    <application'
+              if application_tag not in content:
+                  raise SystemExit("Could not find <application> in AndroidManifest.xml")
+              content = content.replace(application_tag, permission + "\\n" + application_tag, 1)
+              manifest.write_text(content)
+          print("Android INTERNET permission is present.")
+          PY
+
       - name: Install dependencies
         working-directory: ASEL_Telegram_Android_iOS/mobile
         run: flutter pub get
