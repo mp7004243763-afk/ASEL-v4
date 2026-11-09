@@ -1,4 +1,4 @@
-import os, io, asyncio, secrets
+import os, io, asyncio, secrets, logging
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException, UploadFile, File
@@ -13,6 +13,7 @@ from db import (init_db, add_memory, list_memories, delete_memory, add_reminder,
 from ai import ask_asel
 from voice import transcribe_audio, synthesize_speech
 
+logger=logging.getLogger("asel")
 telegram_app=None
 reminder_task=None
 
@@ -155,7 +156,9 @@ async def chat(payload:ChatRequest,x_asel_secret:str|None=Header(default=None)):
     authorize(x_asel_secret)
     try: return {"reply":await ask_asel(payload.user_id,payload.message)}
     except RuntimeError as e: raise HTTPException(503,str(e))
-    except Exception: raise HTTPException(502,"AI provider error")
+    except Exception as e:
+        logger.exception("AI provider error in /api/chat")
+        raise HTTPException(502,"AI provider error") from e
 @app.post("/api/voice")
 async def voice_chat(file:UploadFile=File(...),user_id:str="mobile-owner",x_asel_secret:str|None=Header(default=None)):
     authorize(x_asel_secret); audio=await file.read()
