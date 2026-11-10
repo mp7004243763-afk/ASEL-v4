@@ -1,0 +1,111 @@
+name: Build ASEL Android and iOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [asel-v7]
+    paths:
+      - "ASEL_Telegram_Android_iOS_v4_memory_calendar.zip"
+      - "ASEL_Telegram_Android_iOS/**"
+      - ".github/workflows/build-android-ios.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract mobile source
+        run: unzip -o ASEL_Telegram_Android_iOS_v4_memory_calendar.zip -d .
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Ensure Android platform
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: |
+          if [ ! -d android ]; then
+            flutter create --platforms=android .
+          fi
+
+      - name: Ensure Internet permission
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text()
+          permission = '    <uses-permission android:name="android.permission.INTERNET" />'
+          if permission not in text:
+              marker = "    <application"
+              if marker not in text:
+                  raise SystemExit("AndroidManifest.xml has no <application> tag")
+              manifest.write_text(text.replace(marker, permission + "\\n" + marker, 1))
+          PY
+
+      - name: Install dependencies
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: flutter pub get
+
+      - name: Build release APK
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASEL-V7-Android-APK
+          path: ASEL_Telegram_Android_iOS/mobile/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+  ios:
+    name: Build iOS app (unsigned)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract mobile source
+        run: unzip -o ASEL_Telegram_Android_iOS_v4_memory_calendar.zip -d .
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Ensure iOS platform
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: |
+          if [ ! -d ios ]; then
+            flutter create --platforms=ios .
+          fi
+
+      - name: Install dependencies
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: flutter pub get
+
+      - name: Build iOS without signing
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: flutter build ios --release --no-codesign
+
+      - name: Upload unsigned iOS app
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASEL-V7-iOS-unsigned-app
+          path: ASEL_Telegram_Android_iOS/mobile/build/ios/iphoneos/Runner.app
+          if-no-files-found: error
