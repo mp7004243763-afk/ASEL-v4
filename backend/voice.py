@@ -82,7 +82,7 @@ def detect_language(text: str) -> str:
 
 
 async def synthesize_speech(text: str, language: str | None = None) -> bytes:
-    """Try the natural Edge voice first, then fall back to OpenAI TTS."""
+    """Try the selected language voice first, then fall back to a masculine OpenAI TTS voice."""
     lang = language or detect_language(text)
     edge_voice = VOICE_BY_LANGUAGE.get(lang, VOICE_BY_LANGUAGE["ru"])
     speech_text = clean_text_for_speech(text)
