@@ -9,15 +9,11 @@ from config import OPENAI_API_KEY, OPENAI_BASE_URL
 
 logger = logging.getLogger("asel.voice")
 
-# Edge TTS voices retained for Kazakh/English and as a Russian emergency fallback.
 VOICE_BY_LANGUAGE = {
     "kk": "kk-KZ-AidaNeural",
     "en": "en-US-AriaNeural",
 }
 RU_FALLBACK_VOICE = "ru-RU-SvetlanaNeural"
-
-# Russian voice direction: use the user's 2GIS Liza reference as a style target,
-# not as a claim of cloning that proprietary voice.
 RU_TTS_MODEL = "gpt-4o-mini-tts"
 RU_TTS_VOICE = "coral"
 RU_TTS_INSTRUCTIONS = (
@@ -48,22 +44,22 @@ def _client_instance():
 def clean_text_for_speech(text: str) -> str:
     """Convert Markdown-style assistant output into natural text for TTS."""
     text = html.unescape(text or "")
-    text = re.sub(r"```[\\s\\S]*?```", " ", text)
-    text = re.sub(r"!\\[([^\\]]*)\\]\\([^)]*\\)", r"\\1", text)
-    text = re.sub(r"\\[([^\\]]+)\\]\\((?:[^()]|\\([^()]*\\))*\\)", r"\\1", text)
-    text = re.sub(r"https?://\\S+|www\\.\\S+", " ", text)
-    text = re.sub(r"^\\s{0,3}#{1,6}\\s*", "", text, flags=re.MULTILINE)
-    text = re.sub(r"^\\s*[-*+]\\s+", "", text, flags=re.MULTILINE)
-    text = re.sub(r"^\\s*>\\s?", "", text, flags=re.MULTILINE)
-    text = re.sub(r"\\*\\*(.*?)\\*\\*|__(.*?)__", lambda m: m.group(1) or m.group(2), text)
-    text = re.sub(r"\\*(.*?)\\*|_(.*?)_", lambda m: m.group(1) or m.group(2), text)
-    text = re.sub(r"~~(.*?)~~", r"\\1", text)
-    text = re.sub(r"[\`*_~]", "", text)
+    text = re.sub(r"\x60{3}[\s\S]*?\x60{3}", " ", text)
+    text = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"\[([^\]]+)\]\((?:[^()]|\([^()]*\))*\)", r"\1", text)
+    text = re.sub(r"https?://\S+|www\.\S+", " ", text)
+    text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*>\s?", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\*\*(.*?)\*\*|__(.*?)__", lambda m: m.group(1) or m.group(2), text)
+    text = re.sub(r"\*(.*?)\*|_(.*?)_", lambda m: m.group(1) or m.group(2), text)
+    text = re.sub(r"~~(.*?)~~", r"\1", text)
+    text = re.sub(r"[\x60*_~]", "", text)
     text = re.sub(r'["“”„«»「」『』]', "", text)
-    text = re.sub(r"\\s+([,.;:!?])", r"\\1", text)
-    text = re.sub(r"([,;:!?])(?=\\S)", r"\\1 ", text)
-    text = re.sub(r"\\n{2,}", ". ", text)
-    text = re.sub(r"\\s+", " ", text)
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    text = re.sub(r"([,;:!?])(?=\S)", r"\1 ", text)
+    text = re.sub(r"\n{2,}", ". ", text)
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
@@ -84,7 +80,7 @@ def detect_language(text: str) -> str:
     lower = text.lower()
     if any(ch in lower for ch in "әғқңөұүһі"):
         return "kk"
-    if any("\\u0400" <= ch <= "\\u04ff" for ch in lower):
+    if any("\u0400" <= ch <= "\u04ff" for ch in lower):
         return "ru"
     return "en"
 
@@ -119,8 +115,6 @@ async def synthesize_speech(text: str, language: str | None = None) -> bytes:
     if not speech_text:
         raise ValueError("Нет текста для озвучивания")
 
-    # Russian replies use one consistent expressive TTS engine and voice.
-    # Do not silently fall back to the old Nova voice.
     if lang == "ru":
         try:
             response = await _client_instance().audio.speech.create(
