@@ -167,6 +167,15 @@ class _ChatPageState extends State<ChatPage> {
       }
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       setState(() => _messages.add(ChatMessage(data['reply']?.toString() ?? 'Пустой ответ', false)));
+      final encoded = data['audio_base64']?.toString();
+      if (encoded != null && encoded.isNotEmpty) {
+        final bytes = base64Decode(encoded);
+        final dir = await getTemporaryDirectory();
+        final audioPath = '${dir.path}/asel_reply.mp3';
+        final audioFile = File(audioPath);
+        await audioFile.writeAsBytes(bytes, flush: true);
+        await _player.play(DeviceFileSource(audioPath));
+      }
     } catch (e) {
       setState(() => _messages.add(ChatMessage('Не удалось связаться с сервером. Проверь адрес, ключ и подключение. ($e)', false)));
     } finally {
