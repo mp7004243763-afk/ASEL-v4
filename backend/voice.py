@@ -1,4 +1,5 @@
 import os
+import logging
 import re
 import html
 import tempfile
@@ -13,6 +14,7 @@ VOICE_BY_LANGUAGE = {
 }
 
 _client = None
+logger = logging.getLogger("asel.voice")
 
 
 def _client_instance():
@@ -96,7 +98,7 @@ async def synthesize_speech(text: str, language: str | None = None) -> bytes:
             text=speech_text,
             voice=edge_voice,
             rate="-5%",
-            pitch="+2Hz",
+            pitch="+0Hz",
         ).save(path)
         with open(path, "rb") as audio:
             result = audio.read()
@@ -105,6 +107,7 @@ async def synthesize_speech(text: str, language: str | None = None) -> bytes:
         raise RuntimeError("Edge TTS вернул пустое аудио")
     except Exception as exc:
         edge_error = exc
+        logger.warning("Edge TTS failed for language %s: %s", lang, type(exc).__name__)
     finally:
         if path:
             try:
@@ -115,12 +118,13 @@ async def synthesize_speech(text: str, language: str | None = None) -> bytes:
     # Fallback prevents Edge TTS outages from disabling voice replies.
     try:
         response = await _client_instance().audio.speech.create(
-            model="tts-1",
-            voice="alloy",
+            model="tts-1-hd",
+            voice="nova",
             input=speech_text,
             response_format="mp3",
         )
         result = response.content
+        logger.info("Using OpenAI Nova TTS fallback for language %s", lang)
         if not result or len(result) <= 128:
             raise RuntimeError("OpenAI TTS вернул пустое аудио")
         return result
