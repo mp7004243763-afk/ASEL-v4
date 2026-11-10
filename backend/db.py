@@ -251,3 +251,10 @@ def delete_event(user_id, event_id):
     with connect() as con:
         cur = con.execute("DELETE FROM calendar_events WHERE id=? AND user_id=?", (event_id, uid))
         return cur.rowcount > 0
+
+
+def database_status():
+    """Return safe database diagnostics without exposing connection details."""
+    with connect() as con:
+        con.execute("SELECT 1").fetchone()
+    return {"backend": "postgresql" if USE_POSTGRES else "sqlite", "connected": True}
