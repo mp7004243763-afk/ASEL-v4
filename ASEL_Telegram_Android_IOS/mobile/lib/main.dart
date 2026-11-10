@@ -69,6 +69,7 @@ class _ChatPageState extends State<ChatPage> {
     await _loadHistory();
   }
 
+  // Keep a per-account local copy so the visible transcript survives app restarts.
   String get _historyKey => 'chatHistory_$_userId';
 
   Future<void> _loadLocalHistory() async {
