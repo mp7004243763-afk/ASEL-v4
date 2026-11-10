@@ -187,7 +187,7 @@ def delete_memory(user_id, memory_id):
 
 def memory_context(user_id, limit=30):
     rows = list_memories(user_id, limit)
-    return "\\n".join(f"- {r['content']}" for r in reversed(rows))
+    return "\n".join(f"- {r['content']}" for r in reversed(rows))
 
 
 def add_reminder(user_id, text, due_at, chat_id=None):
