@@ -1,20 +1,32 @@
 import os
-import logging
 import re
 import html
 import tempfile
+import logging
 import edge_tts
 from openai import AsyncOpenAI
 from config import OPENAI_API_KEY, OPENAI_BASE_URL
 
+logger = logging.getLogger("asel.voice")
+
 VOICE_BY_LANGUAGE = {
-    "ru": "ru-RU-DariyaNeural",
-    "kk": "kk-KZ-AigulNeural",
-    "en": "en-US-JennyNeural",
+    "kk": "kk-KZ-AidaNeural",
+    "en": "en-US-AriaNeural",
 }
+RU_FALLBACK_VOICE = "ru-RU-SvetlanaNeural"
+RU_TTS_MODEL = "gpt-4o-mini-tts"
+RU_TTS_VOICE = "coral"
+RU_TTS_INSTRUCTIONS = (
+    "Speak in natural, standard Russian with a distinctly feminine young-adult voice. "
+    "The voice should feel warm, soft, gentle, bright and pleasant, like a friendly "
+    "young personal assistant. Use clear native Russian pronunciation, smooth connected "
+    "speech, natural conversational intonation and moderate pace. Keep the timbre light "
+    "and feminine; avoid a low, husky, harsh, masculine or elderly-sounding voice. "
+    "Avoid exaggerated acting, robotic rhythm, over-enunciation and foreign accent. "
+    "Sound calm, affectionate and lively without becoming childish or breathy."
+)
 
 _client = None
-logger = logging.getLogger("asel.voice")
 
 
 def _client_instance():
@@ -32,25 +44,17 @@ def _client_instance():
 def clean_text_for_speech(text: str) -> str:
     """Convert Markdown-style assistant output into natural text for TTS."""
     text = html.unescape(text or "")
-
-    # Do not read code blocks or image markup aloud.
-    text = re.sub(r"```[\s\S]*?```", " ", text)
+    text = re.sub(r"\x60{3}[\s\S]*?\x60{3}", " ", text)
     text = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", text)
-
-    # Keep the readable label of Markdown links, discard the URL.
     text = re.sub(r"\[([^\]]+)\]\((?:[^()]|\([^()]*\))*\)", r"\1", text)
     text = re.sub(r"https?://\S+|www\.\S+", " ", text)
-
-    # Remove common Markdown formatting and list/heading markers.
     text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.MULTILINE)
     text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
     text = re.sub(r"^\s*>\s?", "", text, flags=re.MULTILINE)
     text = re.sub(r"\*\*(.*?)\*\*|__(.*?)__", lambda m: m.group(1) or m.group(2), text)
     text = re.sub(r"\*(.*?)\*|_(.*?)_", lambda m: m.group(1) or m.group(2), text)
     text = re.sub(r"~~(.*?)~~", r"\1", text)
-    text = re.sub(r"[`*_~]", "", text)
-
-    # Quotation marks are visual punctuation, not words to be spoken.
+    text = re.sub(r"[\x60*_~]", "", text)
     text = re.sub(r'["“”„«»「」『』]', "", text)
     text = re.sub(r"\s+([,.;:!?])", r"\1", text)
     text = re.sub(r"([,;:!?])(?=\S)", r"\1 ", text)
@@ -81,33 +85,22 @@ def detect_language(text: str) -> str:
     return "en"
 
 
-async def synthesize_speech(text: str, language: str | None = None) -> bytes:
-    """Try the selected language voice first, then fall back to a female OpenAI TTS voice."""
-    lang = language or detect_language(text)
-    edge_voice = VOICE_BY_LANGUAGE.get(lang, VOICE_BY_LANGUAGE["ru"])
-    speech_text = clean_text_for_speech(text)
-    if not speech_text:
-        raise ValueError("Нет текста для озвучивания")
-
-    edge_error = None
+async def _edge_speech(speech_text: str, voice: str) -> bytes:
     path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             path = f.name
         await edge_tts.Communicate(
             text=speech_text,
-            voice=edge_voice,
+            voice=voice,
             rate="-8%",
             pitch="+1Hz",
         ).save(path)
         with open(path, "rb") as audio:
             result = audio.read()
-        if result and len(result) > 128:
-            return result
-        raise RuntimeError("Edge TTS вернул пустое аудио")
-    except Exception as exc:
-        edge_error = exc
-        logger.warning("Edge TTS failed for language %s: %s", lang, type(exc).__name__)
+        if not result or len(result) <= 128:
+            raise RuntimeError("Edge TTS вернул пустое аудио")
+        return result
     finally:
         if path:
             try:
@@ -115,21 +108,39 @@ async def synthesize_speech(text: str, language: str | None = None) -> bytes:
             except FileNotFoundError:
                 pass
 
-    # Fallback prevents Edge TTS outages from disabling voice replies.
-    try:
-        response = await _client_instance().audio.speech.create(
-            model="tts-1",
-            voice="nova",
-            input=speech_text,
-            response_format="mp3",
-        )
-        result = response.content
-        logger.info("Using OpenAI TTS fallback (tts-1/nova) for language %s", lang)
-        if not result or len(result) <= 128:
+
+async def synthesize_speech(text: str, language: str | None = None) -> bytes:
+    lang = language or detect_language(text)
+    speech_text = clean_text_for_speech(text)
+    if not speech_text:
+        raise ValueError("Нет текста для озвучивания")
+
+    if lang == "ru":
+        try:
+            response = await _client_instance().audio.speech.create(
+                model=RU_TTS_MODEL,
+                voice=RU_TTS_VOICE,
+                input=speech_text,
+                extra_body={"instructions": RU_TTS_INSTRUCTIONS},
+                response_format="mp3",
+            )
+            result = response.content
+            if result and len(result) > 128:
+                logger.info("Russian TTS: %s/%s", RU_TTS_MODEL, RU_TTS_VOICE)
+                return result
             raise RuntimeError("OpenAI TTS вернул пустое аудио")
-        return result
-    except Exception as fallback_error:
-        raise RuntimeError(
-            f"Не удалось создать аудио: Edge TTS: {type(edge_error).__name__}; "
-            f"резервный TTS: {type(fallback_error).__name__}"
-        ) from fallback_error
+        except Exception as primary_error:
+            logger.exception("Primary Russian TTS failed; trying female Edge fallback")
+            try:
+                result = await _edge_speech(speech_text, RU_FALLBACK_VOICE)
+                logger.warning("Russian TTS fallback used: %s", RU_FALLBACK_VOICE)
+                return result
+            except Exception as fallback_error:
+                raise RuntimeError(
+                    "Не удалось создать русскую озвучку: "
+                    f"основной TTS: {type(primary_error).__name__}; "
+                    f"резервный TTS: {type(fallback_error).__name__}"
+                ) from fallback_error
+
+    voice = VOICE_BY_LANGUAGE.get(lang, VOICE_BY_LANGUAGE["en"])
+    return await _edge_speech(speech_text, voice)
