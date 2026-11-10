@@ -1,0 +1,42 @@
+name: ASEL V7 backend checks
+
+on:
+  push:
+    branches: [asel-v7]
+    paths:
+      - "backend/**"
+      - ".github/workflows/asel-v7-backend.yml"
+  workflow_dispatch:
+
+jobs:
+  sqlite-compatibility:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+      - name: Compile backend modules
+        run: python -m compileall -q .
+      - name: Smoke-test SQLite fallback
+        env:
+          DATABASE_PATH: /tmp/asel-v7-test.sqlite3
+        run: |
+          python - <<'PY'
+          from db import init_db, add_memory, list_memories, add_reminder, list_reminders, add_event, list_events, add_message, get_history
+          init_db()
+          assert add_memory("test-user", "persistent-memory") > 0
+          assert list_memories("test-user")[0]["content"] == "persistent-memory"
+          add_message("test-user", "user", "hello")
+          assert get_history("test-user")[-1]["content"] == "hello"
+          assert add_reminder("test-user", "test reminder", "2099-01-01T00:00:00+00:00") > 0
+          assert len(list_reminders("test-user")) == 1
+          assert add_event("test-user", "test event", "2099-01-01T00:00:00+00:00") > 0
+          assert len(list_events("test-user", "2098-01-01", "2100-01-01")) == 1
+          print("SQLite fallback smoke test passed.")
+          PY
