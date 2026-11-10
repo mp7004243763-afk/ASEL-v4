@@ -1,15 +1,16 @@
 """One-time SQLite -> Neon migration helper.
 
 Run from backend/ with DATABASE_URL set and DATABASE_PATH pointing at the
-SQLite file. It copies existing rows without deleting the source database.
-Rows already present in Neon are skipped by primary key.
+SQLite source file. The source is opened read-only and is never deleted.
+The Neon schema is created first. Existing target rows are not overwritten.
 """
 import os
 import sqlite3
-import sys
 
 import psycopg
 from psycopg.rows import dict_row
+
+from db import init_db
 
 SQLITE_PATH = os.getenv("DATABASE_PATH", "asel.sqlite3")
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -27,7 +28,13 @@ def main():
     if not DATABASE_URL:
         raise SystemExit("DATABASE_URL is missing; no migration performed.")
     if not os.path.isfile(SQLITE_PATH):
-        raise SystemExit(f"SQLite source not found at {SQLITE_PATH}; no migration performed.")
+        raise SystemExit(
+            f"SQLite source not found at {SQLITE_PATH}; no migration performed. "
+            "Do not deploy over the old service until its database has been backed up."
+        )
+
+    # Ensure destination tables and indexes exist before copying.
+    init_db()
 
     source = sqlite3.connect(f"file:{SQLITE_PATH}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
@@ -35,21 +42,44 @@ def main():
     try:
         with psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10) as target:
             for table, columns in TABLES.items():
+                source_columns = {
+                    row["name"] for row in source.execute(f"PRAGMA table_info({table})")
+                }
+                missing = set(columns) - source_columns
+                if missing:
+                    raise SystemExit(
+                        f"SQLite table {table} is missing columns: {', '.join(sorted(missing))}"
+                    )
+
                 rows = source.execute(
                     f"SELECT {', '.join(columns)} FROM {table}"
                 ).fetchall()
-                if not rows:
-                    totals[table] = 0
-                    continue
                 names = ", ".join(columns)
                 placeholders = ", ".join(["%s"] * len(columns))
-                sql = f"INSERT INTO {table} ({names}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+                sql = (
+                    f"INSERT INTO {table} ({names}) VALUES ({placeholders}) "
+                    "ON CONFLICT DO NOTHING"
+                )
                 inserted = 0
                 for row in rows:
                     cur = target.execute(sql, tuple(row[col] for col in columns))
-                    inserted += cur.rowcount
-                totals[table] = inserted
+                    inserted += max(cur.rowcount, 0)
 
+                target_count = target.execute(
+                    f"SELECT COUNT(*) AS count FROM {table}"
+                ).fetchone()["count"]
+                if target_count < len(rows):
+                    raise RuntimeError(
+                        f"Verification failed for {table}: source has {len(rows)} rows, "
+                        f"but Neon has only {target_count}."
+                    )
+                totals[table] = {
+                    "source": len(rows),
+                    "inserted": inserted,
+                    "neon_total": target_count,
+                }
+
+            # Keep generated IDs above all migrated IDs.
             for table in ("messages", "memories", "reminders", "calendar_events"):
                 target.execute(
                     "SELECT setval(pg_get_serial_sequence(%s, 'id'), "
@@ -60,10 +90,13 @@ def main():
     finally:
         source.close()
 
-    print("Migration completed. Inserted rows:")
-    for table, count in totals.items():
-        print(f"{table}: {count}")
-    print("The SQLite source was not modified or deleted.")
+    print("Migration completed. Row counts (source / inserted / Neon total):")
+    for table, counts in totals.items():
+        print(
+            f"{table}: {counts['source']} / {counts['inserted']} / "
+            f"{counts['neon_total']}"
+        )
+    print("The SQLite source was opened read-only and was not modified or deleted.")
 
 
 if __name__ == "__main__":
