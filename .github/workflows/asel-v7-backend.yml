@@ -9,13 +9,15 @@ on:
   workflow_dispatch:
 
 jobs:
-  sqlite-compatibility:
+  sqlite:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: asel-v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -23,20 +25,40 @@ jobs:
         run: pip install -r requirements.txt
       - name: Compile backend modules
         run: python -m compileall -q .
-      - name: Smoke-test SQLite fallback
+      - name: Smoke-test SQLite
         env:
           DATABASE_PATH: /tmp/asel-v7-test.sqlite3
-        run: |
-          python - <<'PY'
-          from db import init_db, add_memory, list_memories, add_reminder, list_reminders, add_event, list_events, add_message, get_history
-          init_db()
-          assert add_memory("test-user", "persistent-memory") > 0
-          assert list_memories("test-user")[0]["content"] == "persistent-memory"
-          add_message("test-user", "user", "hello")
-          assert get_history("test-user")[-1]["content"] == "hello"
-          assert add_reminder("test-user", "test reminder", "2099-01-01T00:00:00+00:00") > 0
-          assert len(list_reminders("test-user")) == 1
-          assert add_event("test-user", "test event", "2099-01-01T00:00:00+00:00") > 0
-          assert len(list_events("test-user", "2098-01-01", "2100-01-01")) == 1
-          print("SQLite fallback smoke test passed.")
-          PY
+        run: python smoke_test_db.py
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: asel_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d asel_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: asel-v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+      - name: Smoke-test PostgreSQL adapter
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/asel_test
+        run: python smoke_test_db.py
