@@ -1,12 +1,11 @@
-name: Build ASEL Android APK
+name: Build ASEL V7 Android APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [asel-v7]
     paths:
-      - "ASEL_Telegram_Android_iOS_v4_memory_calendar.zip"
-      - "ASEL_Telegram_Android_iOS/**"
+      - "ASEL_Telegram_Android_iOS/mobile/**"
       - ".github/workflows/build-android.yml"
 
 permissions:
@@ -14,13 +13,13 @@ permissions:
 
 jobs:
   build:
+    name: Build ASEL V7 APK
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout source
+      - name: Checkout V7 source
         uses: actions/checkout@v4
-
-      - name: Extract ASEL v4 source archive
-        run: unzip -o ASEL_Telegram_Android_iOS_v4_memory_calendar.zip -d .
+        with:
+          ref: asel-v7
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -34,32 +33,32 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Generate Android project files if missing
+      - name: Generate Android project if missing
         working-directory: ASEL_Telegram_Android_iOS/mobile
         run: |
           if [ ! -d android ]; then
             flutter create --platforms=android .
           fi
 
-      - name: Ensure Android Internet permission
+      - name: Ensure Internet and microphone permissions
         working-directory: ASEL_Telegram_Android_iOS/mobile
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           manifest = Path("android/app/src/main/AndroidManifest.xml")
           content = manifest.read_text()
-          permission = '    <uses-permission android:name="android.permission.INTERNET" />'
-          if permission not in content:
-              application_tag = '    <application'
-              if application_tag not in content:
-                  raise SystemExit("Could not find <application> in AndroidManifest.xml")
-              content = content.replace(application_tag, permission + "\n" + application_tag, 1)
-              manifest.write_text(content)
-          print("Android INTERNET permission is present.")
+          permissions = [
+              '    <uses-permission android:name="android.permission.INTERNET" />',
+              '    <uses-permission android:name="android.permission.RECORD_AUDIO" />',
+          ]
+          for permission in permissions:
+              if permission not in content:
+                  content = content.replace('    <application', permission + "\\n    <application", 1)
+          manifest.write_text(content)
+          print("Internet and microphone permissions configured.")
           PY
 
-      - name: Install dependencies
+      - name: Install Flutter dependencies
         working-directory: ASEL_Telegram_Android_iOS/mobile
         run: flutter pub get
 
@@ -67,9 +66,9 @@ jobs:
         working-directory: ASEL_Telegram_Android_iOS/mobile
         run: flutter build apk --release
 
-      - name: Upload APK
+      - name: Upload ASEL V7 APK
         uses: actions/upload-artifact@v4
         with:
-          name: ASEL-v4-Android-APK
+          name: ASEL-V7-Android-APK
           path: ASEL_Telegram_Android_iOS/mobile/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
