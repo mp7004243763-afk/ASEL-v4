@@ -185,6 +185,7 @@ class _ChatPageState extends State<ChatPage> {
           await p.setString('secret', key.text.trim());
           await p.setString('userId', user.text.trim());
           setState(() { _baseUrl = url.text.trim(); _secret = key.text.trim(); _userId = user.text.trim(); });
+          await _loadLocalHistory();
           await _loadHistory();
           if (ctx.mounted) Navigator.pop(ctx);
         }, child: const Text('Сохранить')),
