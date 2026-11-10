@@ -12,6 +12,17 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 USE_POSTGRES = bool(DATABASE_URL)
 
 
+class _PostgresCompat:
+    """Small adapter so existing qmark SQL works with psycopg 3."""
+    def __init__(self, connection):
+        self._connection = connection
+
+    def execute(self, sql, params=()):
+        return self._connection.execute(sql.replace("?", "%s"), params)
+
+
+
+
 @contextmanager
 def connect():
     if USE_POSTGRES:
@@ -21,8 +32,8 @@ def connect():
         except ImportError as exc:
             raise RuntimeError("PostgreSQL configured but psycopg is not installed") from exc
         # psycopg connection context commits on success and rolls back on error.
-        with psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10) as con:
-            yield con
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10) as raw:
+            yield _PostgresCompat(raw)
     else:
         con = sqlite3.connect(DATABASE_PATH, timeout=30)
         con.row_factory = sqlite3.Row
