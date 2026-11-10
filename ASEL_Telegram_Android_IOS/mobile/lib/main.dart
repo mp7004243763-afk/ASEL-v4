@@ -65,7 +65,47 @@ class _ChatPageState extends State<ChatPage> {
       _secret = p.getString('secret') ?? '';
       _userId = p.getString('userId') ?? 'mobile-owner';
     });
+    await _loadLocalHistory();
     await _loadHistory();
+  }
+
+  String get _historyKey => 'chatHistory_$_userId';
+
+  Future<void> _loadLocalHistory() async {
+    final p = await SharedPreferences.getInstance();
+    final raw = p.getString(_historyKey);
+    if (!mounted) return;
+    try {
+      final items = raw == null ? <dynamic>[] : jsonDecode(raw) as List<dynamic>;
+      final restored = items.map((item) {
+        final row = item as Map<String, dynamic>;
+        return ChatMessage(
+          row['text']?.toString() ?? '',
+          row['fromUser'] == true,
+        );
+      }).where((m) => m.text.isNotEmpty).toList();
+      setState(() {
+        _messages
+          ..clear()
+          ..addAll(restored.isEmpty
+              ? [ChatMessage('Сәлем! Я Асель 💫 Чем займёмся?', false)]
+              : restored);
+      });
+    } catch (_) {
+      // Ignore a damaged local cache; the server remains the source of truth.
+    }
+  }
+
+  Future<void> _persistHistory() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setString(_historyKey, jsonEncode(_messages.map((m) => {
+        'text': m.text,
+        'fromUser': m.fromUser,
+      }).toList()));
+    } catch (_) {
+      // Chat remains usable even if local storage is temporarily unavailable.
+    }
   }
 
   Future<void> _loadHistory() async {
@@ -93,6 +133,7 @@ class _ChatPageState extends State<ChatPage> {
           ..clear()
           ..addAll(restored);
       });
+      await _persistHistory();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scroll.hasClients) {
           _scroll.jumpTo(_scroll.position.maxScrollExtent);
@@ -156,6 +197,7 @@ class _ChatPageState extends State<ChatPage> {
     if (text.isEmpty || _sending) return;
     _controller.clear();
     setState(() { _messages.add(ChatMessage(text, true)); _sending = true; });
+    await _persistHistory();
     try {
       final uri = Uri.parse('${_baseUrl.replaceAll(RegExp(r'/$'), '')}/api/chat');
       final response = await http.post(uri,
@@ -167,8 +209,10 @@ class _ChatPageState extends State<ChatPage> {
       }
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       setState(() => _messages.add(ChatMessage(data['reply']?.toString() ?? 'Пустой ответ', false)));
+      await _persistHistory();
     } catch (e) {
       setState(() => _messages.add(ChatMessage('Не удалось связаться с сервером. Проверь адрес, ключ и подключение. ($e)', false)));
+      await _persistHistory();
     } finally {
       setState(() => _sending = false);
       if (_scroll.hasClients) _scroll.animateTo(_scroll.position.maxScrollExtent,
@@ -230,6 +274,7 @@ class _ChatPageState extends State<ChatPage> {
         if (transcript.isNotEmpty) _messages.add(ChatMessage('🎙 $transcript', true));
         _messages.add(ChatMessage(reply, false));
       });
+      await _persistHistory();
       final encoded = data['audio_base64']?.toString();
       if (encoded != null && encoded.isNotEmpty) {
         final bytes = base64Decode(encoded);
@@ -241,6 +286,7 @@ class _ChatPageState extends State<ChatPage> {
       }
     } catch (e) {
       setState(() => _messages.add(ChatMessage('Не удалось обработать голос. Проверь сервер, ключ и настройки аудио. ($e)', false)));
+      await _persistHistory();
     } finally {
       setState(() => _sending = false);
     }
