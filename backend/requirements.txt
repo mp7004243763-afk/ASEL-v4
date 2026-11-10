@@ -4,4 +4,4 @@ python-telegram-bot==21.10
 openai==1.59.7
 python-dotenv==1.0.1
 python-multipart==0.0.20
-edge-tts==7.2.0
+edge-tts==7.3.1
