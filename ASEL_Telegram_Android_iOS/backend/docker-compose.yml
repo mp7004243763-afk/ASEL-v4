@@ -1,0 +1,11 @@
+services:
+  asel:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - asel_data:/app
+volumes:
+  asel_data:
