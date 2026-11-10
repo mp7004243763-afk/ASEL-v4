@@ -8,9 +8,9 @@ from openai import AsyncOpenAI
 from config import OPENAI_API_KEY, OPENAI_BASE_URL
 
 VOICE_BY_LANGUAGE = {
-    "ru": "ru-RU-DmitryNeural",
-    "kk": "kk-KZ-DauletNeural",
-    "en": "en-US-GuyNeural",
+    "ru": "ru-RU-DariyaNeural",
+    "kk": "kk-KZ-AigulNeural",
+    "en": "en-US-JennyNeural",
 }
 
 _client = None
@@ -82,7 +82,7 @@ def detect_language(text: str) -> str:
 
 
 async def synthesize_speech(text: str, language: str | None = None) -> bytes:
-    """Try the selected language voice first, then fall back to a masculine OpenAI TTS voice."""
+    """Try the selected language voice first, then fall back to a female OpenAI TTS voice."""
     lang = language or detect_language(text)
     edge_voice = VOICE_BY_LANGUAGE.get(lang, VOICE_BY_LANGUAGE["ru"])
     speech_text = clean_text_for_speech(text)
@@ -97,8 +97,8 @@ async def synthesize_speech(text: str, language: str | None = None) -> bytes:
         await edge_tts.Communicate(
             text=speech_text,
             voice=edge_voice,
-            rate="-5%",
-            pitch="-2Hz",
+            rate="-8%",
+            pitch="+1Hz",
         ).save(path)
         with open(path, "rb") as audio:
             result = audio.read()
@@ -119,12 +119,12 @@ async def synthesize_speech(text: str, language: str | None = None) -> bytes:
     try:
         response = await _client_instance().audio.speech.create(
             model="tts-1",
-            voice="onyx",
+            voice="nova",
             input=speech_text,
             response_format="mp3",
         )
         result = response.content
-        logger.info("Using OpenAI TTS fallback (tts-1/onyx) for language %s", lang)
+        logger.info("Using OpenAI TTS fallback (tts-1/nova) for language %s", lang)
         if not result or len(result) <= 128:
             raise RuntimeError("OpenAI TTS вернул пустое аудио")
         return result
