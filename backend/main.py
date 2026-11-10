@@ -167,7 +167,16 @@ async def history(user_id:str,limit:int=100,x_asel_secret:str|None=Header(defaul
 @app.post("/api/chat")
 async def chat(payload:ChatRequest,x_asel_secret:str|None=Header(default=None)):
     authorize(x_asel_secret)
-    try: return {"reply":await ask_asel(payload.user_id,payload.message)}
+    try:
+        reply=await ask_asel(payload.user_id,payload.message)
+        audio_b64=""
+        try:
+            import base64
+            audio_reply=await synthesize_speech(reply)
+            audio_b64=base64.b64encode(audio_reply).decode("ascii")
+        except Exception:
+            logger.exception("TTS failed in /api/chat; returning text reply")
+        return {"reply":reply,"audio_base64":audio_b64,"audio_mime":"audio/mpeg"}
     except RuntimeError as e: raise HTTPException(503,str(e))
     except Exception as e:
         logger.exception("AI provider error in /api/chat")
@@ -180,9 +189,15 @@ async def voice_chat(file:UploadFile=File(...),user_id:str="mobile-owner",x_asel
     try:
         transcript=await transcribe_audio(audio,file.filename or "voice.wav")
         if not transcript: raise HTTPException(422,"Не удалось распознать речь")
-        reply=await ask_asel(user_id,transcript); audio_reply=await synthesize_speech(reply)
+        reply=await ask_asel(user_id,transcript)
         import base64
-        return {"transcript":transcript,"reply":reply,"audio_base64":base64.b64encode(audio_reply).decode("ascii"),"audio_mime":"audio/mpeg"}
+        audio_b64=""
+        try:
+            audio_reply=await synthesize_speech(reply)
+            audio_b64=base64.b64encode(audio_reply).decode("ascii")
+        except Exception:
+            logger.exception("TTS failed in /api/voice; returning transcript and text reply")
+        return {"transcript":transcript,"reply":reply,"audio_base64":audio_b64,"audio_mime":"audio/mpeg"}
     except HTTPException: raise
     except RuntimeError as e: raise HTTPException(503,str(e))
     except Exception as e: raise HTTPException(502,f"Ошибка голосового сервиса: {type(e).__name__}")
