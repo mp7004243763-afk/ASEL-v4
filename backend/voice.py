@@ -121,7 +121,7 @@ async def synthesize_speech(text: str, language: str | None = None) -> bytes:
                 model=RU_TTS_MODEL,
                 voice=RU_TTS_VOICE,
                 input=speech_text,
-                instructions=RU_TTS_INSTRUCTIONS,
+                extra_body={"instructions": RU_TTS_INSTRUCTIONS},
                 response_format="mp3",
             )
             result = response.content
