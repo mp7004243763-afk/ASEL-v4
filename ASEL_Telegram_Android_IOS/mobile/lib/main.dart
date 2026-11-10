@@ -128,12 +128,15 @@ class _ChatPageState extends State<ChatPage> {
         );
       }).where((m) => m.text.isNotEmpty).toList();
       if (restored.isEmpty) return;
-      setState(() {
-        _messages
-          ..clear()
-          ..addAll(restored);
-      });
-      await _persistHistory();
+      // Do not replace a newer local transcript with an older server snapshot.
+      if (restored.length >= _messages.length) {
+        setState(() {
+          _messages
+            ..clear()
+            ..addAll(restored);
+        });
+        await _persistHistory();
+      }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scroll.hasClients) {
           _scroll.jumpTo(_scroll.position.maxScrollExtent);
