@@ -71,7 +71,37 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _loadHistory() async {
     if (_secret.isEmpty || _baseUrl.contains('YOUR_SERVER_DOMAIN')) return;
     try {
-      final uri = Uri.parse('${_baseUrl.replaceAll(RegExp(r'/
+      final uri = Uri.parse(_baseUrl).resolve('/api/history').replace(
+        queryParameters: {'user_id': _userId, 'limit': '100'},
+      );
+      final response = await http.get(uri, headers: {'X-Asel-Secret': _secret})
+          .timeout(const Duration(seconds: 30));
+      if (response.statusCode != 200) return;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final items = (data['items'] as List<dynamic>? ?? []);
+      if (!mounted || items.isEmpty) return;
+      final restored = items.map((item) {
+        final row = item as Map<String, dynamic>;
+        return ChatMessage(
+          row['content']?.toString() ?? '',
+          row['role']?.toString() == 'user',
+        );
+      }).where((m) => m.text.isNotEmpty).toList();
+      if (restored.isEmpty) return;
+      setState(() {
+        _messages
+          ..clear()
+          ..addAll(restored);
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scroll.hasClients) {
+          _scroll.jumpTo(_scroll.position.maxScrollExtent);
+        }
+      });
+    } catch (_) {
+      // Keep the local greeting visible if history is temporarily unavailable.
+    }
+  }
   Future<void> _settings() async {
     final url = TextEditingController(text: _baseUrl);
     final key = TextEditingController(text: _secret);
