@@ -10,6 +10,13 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 API_SECRET = os.getenv("ASEL_API_SECRET", "change-this-secret")
 DATABASE_PATH = os.getenv("DATABASE_PATH", "asel.sqlite3")
 
+# Exact owner-approved busy auto-reply. It is a shared setting for future
+# authorized messenger integrations; defining it does not enable auto-replies.
+BUSY_AUTO_REPLY = os.getenv(
+    "ASEL_BUSY_AUTO_REPLY",
+    "Прошу прощения, шеф сейчас немного занят, но обязательно свяжется с вами попозже.",
+)
+
 ASEL_SYSTEM_PROMPT = """
 Ты — Асель, персональная ИИ-помощница Велимира.
 Тебе 24 года, ты из Шымкента. Ты тёплая, уверенная, остроумная,
