@@ -12,7 +12,9 @@ _client = None
 _MEMORY_HINTS = re.compile(
     r"\b(запомни|помни|не забывай|я |мой |моя |моё |мои |мне |меня |у меня|"
     r"люблю|нравится|предпочитаю|не люблю|работаю|живу|зовут|планирую|"
-    r"моя цель|мой проект|мне важно|менің|маған|ұнатамын|жақсы көремін)\b",
+    r"моя цель|мой проект|мне важно|менің|маған|ұнатамын|жақсы көремін|"
+    r"асель|asel|приложени|проект|разработк|сборк|голосов|календар|напоминан|"
+    r"сервер|apk|render|тестировани)\b",
     re.IGNORECASE,
 )
 _FORGET_HINTS = re.compile(
@@ -42,6 +44,8 @@ async def _auto_save_memories(user_id: str, user_text: str) -> None:
         "Извлеки из сообщения пользователя только сведения, которые полезно помнить "
         "между будущими разговорами: устойчивые предпочтения, факты о себе, важные "
         "отношения, долгосрочные цели, постоянные ограничения и текущие проекты. "
+        "Для уже известных проектов сохраняй важные изменения статуса, принятые решения, "
+        "рабочие настройки и незавершённые проблемы, чтобы продолжать работу после перезапуска. "
         "Не сохраняй разовые просьбы, вопросы, гипотезы, цитаты о других людях, "
         "временные планы и случайные детали. Не сохраняй пароли, API-ключи, токены, "
         "платёжные реквизиты или иные секреты. Не сохраняй чувствительные сведения "
@@ -62,7 +66,12 @@ async def _auto_save_memories(user_id: str, user_text: str) -> None:
             temperature=0,
         )
         raw = (response.choices[0].message.content or "").strip()
-        data = json.loads(raw)
+        # Be tolerant if the model wraps valid JSON in Markdown fences or extra text.
+        raw = re.sub(r"^\s*\x60{3}(?:json)?\s*|\s*\x60{3}\s*$", "", raw, flags=re.IGNORECASE)
+        match = re.search(r"\{[\s\S]*\}", raw)
+        if not match:
+            return
+        data = json.loads(match.group(0))
         candidates = data.get("memories", [])
         if not isinstance(candidates, list):
             return
@@ -93,7 +102,7 @@ async def ask_asel(user_id: str, text: str) -> str:
     # already be used in the current conversation.
     await _auto_save_memories(user_id, text)
 
-    history = get_history(user_id, 20)
+    history = get_history(user_id, 40)
     memories = memory_context(user_id)
     system = ASEL_SYSTEM_PROMPT
     if memories:
