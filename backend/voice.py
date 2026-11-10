@@ -118,13 +118,13 @@ async def synthesize_speech(text: str, language: str | None = None) -> bytes:
     # Fallback prevents Edge TTS outages from disabling voice replies.
     try:
         response = await _client_instance().audio.speech.create(
-            model="tts-1-hd",
-            voice="nova",
+            model="tts-1",
+            voice="alloy",
             input=speech_text,
             response_format="mp3",
         )
         result = response.content
-        logger.info("Using OpenAI Nova TTS fallback for language %s", lang)
+        logger.info("Using OpenAI TTS fallback (tts-1/alloy) for language %s", lang)
         if not result or len(result) <= 128:
             raise RuntimeError("OpenAI TTS вернул пустое аудио")
         return result
