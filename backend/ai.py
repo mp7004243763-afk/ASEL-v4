@@ -10,13 +10,13 @@ _client = None
 # Only call the memory extractor when a message plausibly contains a personal
 # fact, preference, ongoing project, or an explicit request to remember.
 _MEMORY_HINTS = re.compile(
-    r"\\b(запомни|помни|не забывай|я |мой |моя |моё |мои |мне |меня |у меня|"
+    r"\b(запомни|помни|не забывай|я |мой |моя |моё |мои |мне |меня |у меня|"
     r"люблю|нравится|предпочитаю|не люблю|работаю|живу|зовут|планирую|"
-    r"моя цель|мой проект|мне важно|менің|маған|ұнатамын|жақсы көремін)\\b",
+    r"моя цель|мой проект|мне важно|менің|маған|ұнатамын|жақсы көремін)\b",
     re.IGNORECASE,
 )
 _FORGET_HINTS = re.compile(
-    r"\\b(забудь|удали из памяти|не запоминай|не сохраняй|forget|do not remember)\\b",
+    r"\b(забудь|удали из памяти|не запоминай|не сохраняй|forget|do not remember)\b",
     re.IGNORECASE,
 )
 
