@@ -6,6 +6,7 @@ on:
     branches: [asel-v7]
     paths:
       - "ASEL_Telegram_Android_iOS/mobile/**"
+      - "backend/voice.py"
       - ".github/workflows/build-android.yml"
 
 permissions:
