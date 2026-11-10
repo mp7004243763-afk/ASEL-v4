@@ -3,27 +3,25 @@ import re
 import html
 import tempfile
 import logging
-import edge_tts
 from openai import AsyncOpenAI
 from config import OPENAI_API_KEY, OPENAI_BASE_URL
 
 logger = logging.getLogger("asel.voice")
 
-VOICE_BY_LANGUAGE = {
-    "kk": "kk-KZ-AidaNeural",
-    "en": "en-US-AriaNeural",
-}
-RU_FALLBACK_VOICE = "ru-RU-SvetlanaNeural"
-RU_TTS_MODEL = "gpt-4o-mini-tts"
-RU_TTS_VOICE = "coral"
-RU_TTS_INSTRUCTIONS = (
-    "Speak in natural, standard Russian with a distinctly feminine young-adult voice. "
-    "The voice should feel warm, soft, gentle, bright and pleasant, like a friendly "
-    "young personal assistant. Use clear native Russian pronunciation, smooth connected "
-    "speech, natural conversational intonation and moderate pace. Keep the timbre light "
-    "and feminine; avoid a low, husky, harsh, masculine or elderly-sounding voice. "
-    "Avoid exaggerated acting, robotic rhythm, over-enunciation and foreign accent. "
-    "Sound calm, affectionate and lively without becoming childish or breathy."
+# One TTS voice is deliberately used for Russian and Kazakh so Asel keeps
+# the same recognizable vocal identity when the conversation changes language.
+TTS_MODEL = "gpt-4o-mini-tts"
+TTS_VOICE = "coral"
+TTS_INSTRUCTIONS = (
+    "You are voicing Asel, the same young adult female personal assistant in every language. "
+    "Use one consistent, clearly feminine voice identity: warm, soft, gentle, bright, "
+    "friendly and naturally lively. Speak the supplied text in its original language. "
+    "For Russian, use fluent native-sounding Russian pronunciation and natural conversational "
+    "intonation. For Kazakh, pronounce Kazakh words and sounds carefully and naturally; "
+    "do not read Kazakh with a Russian accent. Keep a light feminine timbre, moderate pace "
+    "and smooth connected speech. Avoid a low, husky, harsh, masculine, elderly, robotic, "
+    "monotonous or exaggeratedly theatrical delivery. Do not imitate or impersonate any "
+    "real person or celebrity. Preserve the same vocal identity across Russian and Kazakh."
 )
 
 _client = None
@@ -76,71 +74,28 @@ async def transcribe_audio(audio_bytes: bytes, filename: str = "voice.wav") -> s
     return (getattr(result, "text", "") or "").strip()
 
 
-def detect_language(text: str) -> str:
-    lower = text.lower()
-    if any(ch in lower for ch in "әғқңөұүһі"):
-        return "kk"
-    if any("\u0400" <= ch <= "\u04ff" for ch in lower):
-        return "ru"
-    return "en"
-
-
-async def _edge_speech(speech_text: str, voice: str) -> bytes:
-    path = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            path = f.name
-        await edge_tts.Communicate(
-            text=speech_text,
-            voice=voice,
-            rate="-8%",
-            pitch="+1Hz",
-        ).save(path)
-        with open(path, "rb") as audio:
-            result = audio.read()
-        if not result or len(result) <= 128:
-            raise RuntimeError("Edge TTS вернул пустое аудио")
-        return result
-    finally:
-        if path:
-            try:
-                os.remove(path)
-            except FileNotFoundError:
-                pass
-
-
 async def synthesize_speech(text: str, language: str | None = None) -> bytes:
-    lang = language or detect_language(text)
+    # 'language' remains accepted for backwards compatibility with existing callers.
+    # The same voice is intentionally used regardless of language.
     speech_text = clean_text_for_speech(text)
     if not speech_text:
         raise ValueError("Нет текста для озвучивания")
 
-    if lang == "ru":
-        try:
-            response = await _client_instance().audio.speech.create(
-                model=RU_TTS_MODEL,
-                voice=RU_TTS_VOICE,
-                input=speech_text,
-                extra_body={"instructions": RU_TTS_INSTRUCTIONS},
-                response_format="mp3",
-            )
-            result = response.content
-            if result and len(result) > 128:
-                logger.info("Russian TTS: %s/%s", RU_TTS_MODEL, RU_TTS_VOICE)
-                return result
-            raise RuntimeError("OpenAI TTS вернул пустое аудио")
-        except Exception as primary_error:
-            logger.exception("Primary Russian TTS failed; trying female Edge fallback")
-            try:
-                result = await _edge_speech(speech_text, RU_FALLBACK_VOICE)
-                logger.warning("Russian TTS fallback used: %s", RU_FALLBACK_VOICE)
-                return result
-            except Exception as fallback_error:
-                raise RuntimeError(
-                    "Не удалось создать русскую озвучку: "
-                    f"основной TTS: {type(primary_error).__name__}; "
-                    f"резервный TTS: {type(fallback_error).__name__}"
-                ) from fallback_error
-
-    voice = VOICE_BY_LANGUAGE.get(lang, VOICE_BY_LANGUAGE["en"])
-    return await _edge_speech(speech_text, voice)
+    try:
+        response = await _client_instance().audio.speech.create(
+            model=TTS_MODEL,
+            voice=TTS_VOICE,
+            input=speech_text,
+            instructions=TTS_INSTRUCTIONS,
+            response_format="mp3",
+        )
+        result = response.content
+        if result and len(result) > 128:
+            logger.info("Asel unified TTS: %s/%s", TTS_MODEL, TTS_VOICE)
+            return result
+        raise RuntimeError("TTS вернул пустое аудио")
+    except Exception as error:
+        logger.exception("Asel unified TTS failed")
+        raise RuntimeError(
+            f"Не удалось создать озвучку Асель: {type(error).__name__}"
+        ) from error
