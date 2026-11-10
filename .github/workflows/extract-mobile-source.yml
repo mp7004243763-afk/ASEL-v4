@@ -1,0 +1,40 @@
+name: Extract ASEL mobile source into V7 branch
+
+on:
+  push:
+    branches: [asel-v7]
+    paths:
+      - "ASEL_Telegram_Android_iOS_v4_memory_calendar.zip"
+      - ".github/workflows/extract-mobile-source.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout V7 branch
+        uses: actions/checkout@v4
+        with:
+          ref: asel-v7
+          fetch-depth: 0
+
+      - name: Extract source archive
+        run: |
+          unzip -o ASEL_Telegram_Android_iOS_v4_memory_calendar.zip -d .
+          test -d ASEL_Telegram_Android_iOS/mobile
+          test -f ASEL_Telegram_Android_iOS/mobile/pubspec.yaml
+          echo "Flutter source extracted and pubspec.yaml found."
+
+      - name: Commit extracted source to V7 branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ASEL_Telegram_Android_iOS/
+          if git diff --cached --quiet; then
+            echo "Extracted source is already up to date."
+          else
+            git commit -m "Import extracted ASEL mobile source for V7"
+            git push origin asel-v7
+          fi
