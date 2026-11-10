@@ -218,8 +218,9 @@ def due_reminders(now_iso):
 
 def mark_reminder_sent(reminder_id, sent=True):
     with connect() as con:
-        con.execute("UPDATE reminders SET status=?,sent_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'",
-                    ("sent" if sent else "failed", reminder_id))
+        from datetime import datetime, timezone
+        con.execute("UPDATE reminders SET status=?,sent_at=? WHERE id=? AND status='pending'",
+                    ("sent" if sent else "failed", datetime.now(timezone.utc).isoformat(), reminder_id))
 
 
 def delete_reminder(user_id, reminder_id):
