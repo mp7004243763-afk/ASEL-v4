@@ -9,7 +9,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 from config import BOT_TOKEN, API_SECRET
 from db import (init_db, add_memory, list_memories, delete_memory, add_reminder,
                 list_reminders, due_reminders, mark_reminder_sent, delete_reminder,
-                add_event, list_events, delete_event, create_link_code, redeem_link_code, get_history)
+                add_event, list_events, delete_event, create_link_code, redeem_link_code, get_history, database_status)
 from ai import ask_asel
 from voice import transcribe_audio, synthesize_speech
 
@@ -145,12 +145,18 @@ async def lifespan(app:FastAPI):
     if telegram_app:
         await telegram_app.updater.stop(); await telegram_app.stop(); await telegram_app.shutdown()
 
-app=FastAPI(title="ASEL API",version="0.4.0",lifespan=lifespan)
+app=FastAPI(title="ASEL API",version="0.7.0",lifespan=lifespan)
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=False,
                    allow_methods=["GET","POST","DELETE"],allow_headers=["*"])
 
 @app.get("/health")
-async def health(): return {"status":"ok","service":"ASEL","version":"0.4.0"}
+async def health():
+    try:
+        db = database_status()
+        return {"status": "ok", "service": "ASEL", "version": "0.7.0", "database": db}
+    except Exception:
+        logger.exception("Database health check failed")
+        raise HTTPException(503, "Database unavailable")
 @app.get("/api/history")
 async def history(user_id:str,limit:int=100,x_asel_secret:str|None=Header(default=None)):
     authorize(x_asel_secret)
