@@ -8,9 +8,9 @@ from openai import AsyncOpenAI
 from config import OPENAI_API_KEY, OPENAI_BASE_URL
 
 VOICE_BY_LANGUAGE = {
-    "ru": "ru-RU-DariyaNeural",
-    "kk": "kk-KZ-AidaNeural",
-    "en": "en-US-AriaNeural",
+    "ru": "ru-RU-DmitryNeural",
+    "kk": "kk-KZ-DauletNeural",
+    "en": "en-US-GuyNeural",
 }
 
 _client = None
@@ -98,7 +98,7 @@ async def synthesize_speech(text: str, language: str | None = None) -> bytes:
             text=speech_text,
             voice=edge_voice,
             rate="-5%",
-            pitch="+0Hz",
+            pitch="-2Hz",
         ).save(path)
         with open(path, "rb") as audio:
             result = audio.read()
@@ -119,12 +119,12 @@ async def synthesize_speech(text: str, language: str | None = None) -> bytes:
     try:
         response = await _client_instance().audio.speech.create(
             model="tts-1",
-            voice="alloy",
+            voice="onyx",
             input=speech_text,
             response_format="mp3",
         )
         result = response.content
-        logger.info("Using OpenAI TTS fallback (tts-1/alloy) for language %s", lang)
+        logger.info("Using OpenAI TTS fallback (tts-1/onyx) for language %s", lang)
         if not result or len(result) <= 128:
             raise RuntimeError("OpenAI TTS вернул пустое аудио")
         return result
