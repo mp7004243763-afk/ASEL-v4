@@ -80,25 +80,52 @@ def detect_language(text: str) -> str:
 
 
 async def synthesize_speech(text: str, language: str | None = None) -> bytes:
+    """Try the natural Edge voice first, then fall back to OpenAI TTS."""
     lang = language or detect_language(text)
-    voice = VOICE_BY_LANGUAGE.get(lang, VOICE_BY_LANGUAGE["ru"])
+    edge_voice = VOICE_BY_LANGUAGE.get(lang, VOICE_BY_LANGUAGE["ru"])
     speech_text = clean_text_for_speech(text)
     if not speech_text:
         raise ValueError("Нет текста для озвучивания")
 
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-        path = f.name
+    edge_error = None
+    path = None
     try:
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            path = f.name
         await edge_tts.Communicate(
             text=speech_text,
-            voice=voice,
+            voice=edge_voice,
             rate="-5%",
             pitch="+2Hz",
         ).save(path)
         with open(path, "rb") as audio:
-            return audio.read()
+            result = audio.read()
+        if result and len(result) > 128:
+            return result
+        raise RuntimeError("Edge TTS вернул пустое аудио")
+    except Exception as exc:
+        edge_error = exc
     finally:
-        try:
-            os.remove(path)
-        except FileNotFoundError:
-            pass
+        if path:
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+
+    # Fallback prevents Edge TTS outages from disabling voice replies.
+    try:
+        response = await _client_instance().audio.speech.create(
+            model="tts-1",
+            voice="alloy",
+            input=speech_text,
+            response_format="mp3",
+        )
+        result = response.content
+        if not result or len(result) <= 128:
+            raise RuntimeError("OpenAI TTS вернул пустое аудио")
+        return result
+    except Exception as fallback_error:
+        raise RuntimeError(
+            f"Не удалось создать аудио: Edge TTS: {type(edge_error).__name__}; "
+            f"резервный TTS: {type(fallback_error).__name__}"
+        ) from fallback_error
