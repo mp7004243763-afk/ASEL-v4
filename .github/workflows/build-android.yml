@@ -5,7 +5,7 @@ on:
   push:
     branches: [asel-v7]
     paths:
-      - "ASEL_Telegram_Android_IOS/mobile/**"
+      - "ASEL_Telegram_Android_iOS/mobile/**"
       - ".github/workflows/build-android.yml"
 
 permissions:
@@ -34,14 +34,14 @@ jobs:
           cache: true
 
       - name: Generate Android project if missing
-        working-directory: ASEL_Telegram_Android_IOS/mobile
+        working-directory: ASEL_Telegram_Android_iOS/mobile
         run: |
           if [ ! -d android ]; then
             flutter create --platforms=android .
           fi
 
       - name: Ensure Internet and microphone permissions
-        working-directory: ASEL_Telegram_Android_IOS/mobile
+        working-directory: ASEL_Telegram_Android_iOS/mobile
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -59,16 +59,16 @@ jobs:
           PY
 
       - name: Install Flutter dependencies
-        working-directory: ASEL_Telegram_Android_IOS/mobile
+        working-directory: ASEL_Telegram_Android_iOS/mobile
         run: flutter pub get
 
       - name: Build release APK
-        working-directory: ASEL_Telegram_Android_IOS/mobile
+        working-directory: ASEL_Telegram_Android_iOS/mobile
         run: flutter build apk --release
 
       - name: Upload ASEL V7 APK
         uses: actions/upload-artifact@v4
         with:
           name: ASEL-V7-Android-APK
-          path: ASEL_Telegram_Android_IOS/mobile/build/app/outputs/flutter-apk/app-release.apk
+          path: ASEL_Telegram_Android_iOS/mobile/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
