@@ -109,6 +109,20 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  Future<bool> _playReplyAudio(Map<String, dynamic> data) async {
+    final encoded = data['audio_base64']?.toString() ?? '';
+    if (encoded.isEmpty) return false;
+    final bytes = base64Decode(encoded);
+    if (bytes.isEmpty) return false;
+    final dir = await getTemporaryDirectory();
+    final audioPath = '${dir.path}/asel_reply_${DateTime.now().millisecondsSinceEpoch}.mp3';
+    final audioFile = File(audioPath);
+    await audioFile.writeAsBytes(bytes, flush: true);
+    await _player.stop();
+    await _player.play(DeviceFileSource(audioPath));
+    return true;
+  }
+
   Future<void> _loadHistory() async {
     if (_secret.isEmpty || _baseUrl.contains('YOUR_SERVER_DOMAIN')) return;
     try {
@@ -215,6 +229,11 @@ class _ChatPageState extends State<ChatPage> {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       setState(() => _messages.add(ChatMessage(data['reply']?.toString() ?? 'Пустой ответ', false)));
       await _persistHistory();
+      final audioPlayed = await _playReplyAudio(data);
+      if (!audioPlayed && mounted) {
+        setState(() => _messages.add(ChatMessage('Ответ получен, но сервер не прислал аудио. Нужно проверить озвучку на сервере.', false)));
+        await _persistHistory();
+      }
     } catch (e) {
       setState(() => _messages.add(ChatMessage('Не удалось связаться с сервером. Проверь адрес, ключ и подключение. ($e)', false)));
       await _persistHistory();
@@ -280,14 +299,16 @@ class _ChatPageState extends State<ChatPage> {
         _messages.add(ChatMessage(reply, false));
       });
       await _persistHistory();
-      final encoded = data['audio_base64']?.toString();
-      if (encoded != null && encoded.isNotEmpty) {
-        final bytes = base64Decode(encoded);
-        final dir = await getTemporaryDirectory();
-        final audioPath = '${dir.path}/asel_reply.mp3';
-        final audioFile = File(audioPath);
-        await audioFile.writeAsBytes(bytes, flush: true);
-        await _player.play(DeviceFileSource(audioPath));
+      final audioPlayed = await _playReplyAudio(data);
+      if (!audioPlayed && mounted) {
+        final detail = data['audio_error']?.toString();
+        setState(() => _messages.add(ChatMessage(
+          detail == null || detail.isEmpty
+            ? 'Текст распознан и ответ получен, но сервер не сформировал аудио.'
+            : 'Текстовый ответ получен, но озвучка не сработала ($detail).',
+          false,
+        )));
+        await _persistHistory();
       }
     } catch (e) {
       setState(() => _messages.add(ChatMessage('Не удалось обработать голос. Проверь сервер, ключ и настройки аудио. ($e)', false)));
