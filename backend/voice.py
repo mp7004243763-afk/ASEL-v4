@@ -107,37 +107,46 @@ async def synthesize_speech(text: str, language: str | None = None) -> bytes:
         raise ValueError("Нет текста для озвучивания")
 
     lang = detect_language(speech_text, language)
-    voice = TTS_VOICES[lang]
-    temp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as output:
-            temp_path = output.name
+    # If Microsoft's Dariya endpoint temporarily fails, fall back to the
+    # previously working Russian female voice instead of returning text only.
+    voices = [TTS_VOICES[lang]]
+    if lang == "ru":
+        voices.append("ru-RU-SvetlanaNeural")
 
-        communicate = edge_tts.Communicate(
-            text=speech_text,
-            voice=voice,
-            rate="+0%",
-            volume="+0%",
-            pitch="+0Hz",
-        )
-        await communicate.save(temp_path)
+    last_error = None
+    for voice in voices:
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as output:
+                temp_path = output.name
 
-        with open(temp_path, "rb") as audio_file:
-            result = audio_file.read()
+            communicate = edge_tts.Communicate(
+                text=speech_text,
+                voice=voice,
+                rate="+0%",
+                volume="+0%",
+                pitch="+0Hz",
+            )
+            await communicate.save(temp_path)
 
-        if not result or len(result) <= 128:
-            raise RuntimeError("Edge TTS вернул пустое аудио")
+            with open(temp_path, "rb") as audio_file:
+                result = audio_file.read()
 
-        logger.info("Asel Edge TTS selected language=%s voice=%s", lang, voice)
-        return result
-    except Exception as error:
-        logger.exception("Asel Edge TTS failed for voice %s", voice)
-        raise RuntimeError(
-            f"Не удалось создать озвучку Асель голосом {voice}: {type(error).__name__}"
-        ) from error
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except OSError:
-                logger.warning("Could not remove temporary TTS file: %s", temp_path)
+            if not result or len(result) <= 128:
+                raise RuntimeError("Edge TTS вернул пустое аудио")
+
+            logger.info("Asel Edge TTS selected language=%s voice=%s", lang, voice)
+            return result
+        except Exception as error:
+            last_error = error
+            logger.exception("Asel Edge TTS failed for voice %s", voice)
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    logger.warning("Could not remove temporary TTS file: %s", temp_path)
+
+    raise RuntimeError(
+        f"Не удалось создать озвучку Асель: {type(last_error).__name__ if last_error else 'UnknownError'}"
+    ) from last_error
