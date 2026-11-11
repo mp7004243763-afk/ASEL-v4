@@ -3,26 +3,21 @@ import re
 import html
 import tempfile
 import logging
+
+import edge_tts
 from openai import AsyncOpenAI
 from config import OPENAI_API_KEY, OPENAI_BASE_URL
 
 logger = logging.getLogger("asel.voice")
 
-# One TTS voice is deliberately used for Russian and Kazakh so Asel keeps
-# the same recognizable vocal identity when the conversation changes language.
-TTS_MODEL = "gpt-4o-mini-tts"
-TTS_VOICE = "coral"
-TTS_INSTRUCTIONS = (
-    "You are voicing Asel, the same young adult female personal assistant in every language. "
-    "Use one consistent, clearly feminine voice identity: warm, soft, gentle, bright, "
-    "friendly and naturally lively. Speak the supplied text in its original language. "
-    "For Russian, use fluent native-sounding Russian pronunciation and natural conversational "
-    "intonation. For Kazakh, pronounce Kazakh words and sounds carefully and naturally; "
-    "do not read Kazakh with a Russian accent. Keep a light feminine timbre, moderate pace "
-    "and smooth connected speech. Avoid a low, husky, harsh, masculine, elderly, robotic, "
-    "monotonous or exaggeratedly theatrical delivery. Do not imitate or impersonate any "
-    "real person or celebrity. Preserve the same vocal identity across Russian and Kazakh."
-)
+# Microsoft Edge neural voices. Aida is not present in Microsoft's
+# published kk-KZ voice catalogue; Aigul is the supported female Kazakh voice.
+TTS_VOICES = {
+    "ru": "ru-RU-DariyaNeural",
+    "kk": "kk-KZ-AigulNeural",
+    "en": "en-US-AriaNeural",
+}
+DEFAULT_LANGUAGE = "ru"
 
 _client = None
 
@@ -61,6 +56,37 @@ def clean_text_for_speech(text: str) -> str:
     return text.strip()
 
 
+def detect_language(text: str, language: str | None = None) -> str:
+    """Select the TTS locale from an explicit hint or the reply's script."""
+    if language:
+        hint = language.strip().lower().replace("_", "-")
+        if hint.startswith(("kk", "kaz")) or "қазақ" in hint:
+            return "kk"
+        if hint.startswith(("en", "eng")):
+            return "en"
+        if hint.startswith(("ru", "rus")):
+            return "ru"
+
+    value = text or ""
+    if re.search(r"[әғқңөұүһі]", value, flags=re.IGNORECASE):
+        return "kk"
+
+    words = set(re.findall(r"[а-яё]+", value.lower()))
+    kazakh_markers = {
+        "сәлем", "рақмет", "рахмет", "қалай", "жақсы", "үшін",
+        "бұл", "сіз", "сен", "менің", "маған", "біз", "сізге",
+        "керек", "жоқ", "ия", "иә", "жаным", "қазақша", "болды",
+    }
+    if words & kazakh_markers:
+        return "kk"
+
+    latin_count = len(re.findall(r"[a-z]", value, flags=re.IGNORECASE))
+    cyrillic_count = len(re.findall(r"[а-яё]", value, flags=re.IGNORECASE))
+    if latin_count > cyrillic_count:
+        return "en"
+    return DEFAULT_LANGUAGE
+
+
 async def transcribe_audio(audio_bytes: bytes, filename: str = "voice.wav") -> str:
     suffix = os.path.splitext(filename)[1] or ".wav"
     with tempfile.NamedTemporaryFile(suffix=suffix) as f:
@@ -75,27 +101,43 @@ async def transcribe_audio(audio_bytes: bytes, filename: str = "voice.wav") -> s
 
 
 async def synthesize_speech(text: str, language: str | None = None) -> bytes:
-    # 'language' remains accepted for backwards compatibility with existing callers.
-    # The same voice is intentionally used regardless of language.
+    """Synthesize Asel's reply with the matching female Microsoft neural voice."""
     speech_text = clean_text_for_speech(text)
     if not speech_text:
         raise ValueError("Нет текста для озвучивания")
 
+    lang = detect_language(speech_text, language)
+    voice = TTS_VOICES[lang]
+    temp_path = None
     try:
-        response = await _client_instance().audio.speech.create(
-            model=TTS_MODEL,
-            voice=TTS_VOICE,
-            input=speech_text,
-            extra_body={"instructions": TTS_INSTRUCTIONS},
-            response_format="mp3",
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as output:
+            temp_path = output.name
+
+        communicate = edge_tts.Communicate(
+            text=speech_text,
+            voice=voice,
+            rate="+0%",
+            volume="+0%",
+            pitch="+0Hz",
         )
-        result = response.content
-        if result and len(result) > 128:
-            logger.info("Asel unified TTS: %s/%s", TTS_MODEL, TTS_VOICE)
-            return result
-        raise RuntimeError("TTS вернул пустое аудио")
+        await communicate.save(temp_path)
+
+        with open(temp_path, "rb") as audio_file:
+            result = audio_file.read()
+
+        if not result or len(result) <= 128:
+            raise RuntimeError("Edge TTS вернул пустое аудио")
+
+        logger.info("Asel Edge TTS selected language=%s voice=%s", lang, voice)
+        return result
     except Exception as error:
-        logger.exception("Asel unified TTS failed")
+        logger.exception("Asel Edge TTS failed for voice %s", voice)
         raise RuntimeError(
-            f"Не удалось создать озвучку Асель: {type(error).__name__}"
+            f"Не удалось создать озвучку Асель голосом {voice}: {type(error).__name__}"
         ) from error
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                logger.warning("Could not remove temporary TTS file: %s", temp_path)
