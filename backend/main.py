@@ -174,9 +174,12 @@ async def chat(payload:ChatRequest,x_asel_secret:str|None=Header(default=None)):
             import base64
             audio_reply=await synthesize_speech(reply)
             audio_b64=base64.b64encode(audio_reply).decode("ascii")
-        except Exception:
+        except Exception as tts_error:
             logger.exception("TTS failed in /api/chat; returning text reply")
-        return {"reply":reply,"audio_base64":audio_b64,"audio_mime":"audio/mpeg"}
+            audio_error = type(tts_error).__name__
+        else:
+            audio_error = ""
+        return {"reply":reply,"audio_base64":audio_b64,"audio_mime":"audio/mpeg","audio_error":audio_error}
     except RuntimeError as e: raise HTTPException(503,str(e))
     except Exception as e:
         logger.exception("AI provider error in /api/chat")
@@ -195,9 +198,12 @@ async def voice_chat(file:UploadFile=File(...),user_id:str="mobile-owner",x_asel
         try:
             audio_reply=await synthesize_speech(reply)
             audio_b64=base64.b64encode(audio_reply).decode("ascii")
-        except Exception:
+        except Exception as tts_error:
             logger.exception("TTS failed in /api/voice; returning transcript and text reply")
-        return {"transcript":transcript,"reply":reply,"audio_base64":audio_b64,"audio_mime":"audio/mpeg"}
+            audio_error = type(tts_error).__name__
+        else:
+            audio_error = ""
+        return {"transcript":transcript,"reply":reply,"audio_base64":audio_b64,"audio_mime":"audio/mpeg","audio_error":audio_error}
     except HTTPException: raise
     except RuntimeError as e: raise HTTPException(503,str(e))
     except Exception as e: raise HTTPException(502,f"Ошибка голосового сервиса: {type(e).__name__}")
