@@ -12,6 +12,8 @@ from db import (init_db, add_memory, list_memories, delete_memory, add_reminder,
                 add_event, list_events, delete_event, create_link_code, redeem_link_code, get_history, database_status)
 from ai import ask_asel
 from voice import transcribe_audio, synthesize_speech
+from google_calendar import (init_google_calendar_db, create_authorization_url, finish_authorization,
+    connection_status, list_google_events, create_google_event, update_google_event, delete_google_event)
 
 logger=logging.getLogger("asel")
 telegram_app=None
@@ -128,6 +130,7 @@ async def cmd_link(update,context):
 async def lifespan(app:FastAPI):
     global telegram_app,reminder_task
     init_db()
+    init_google_calendar_db()
     if BOT_TOKEN:
         telegram_app=Application.builder().token(BOT_TOKEN).build()
         for command,handler in [
@@ -255,3 +258,84 @@ async def link_account(p:LinkRequest,x_asel_secret:str|None=Header(default=None)
     authorize(x_asel_secret)
     if not redeem_link_code(p.mobile_user_id,p.code): raise HTTPException(400,"Код неверный или истёк")
     return {"linked":True,"message":"Мобильный аккаунт связан с Telegram"}
+
+
+# Google Calendar OAuth and event API. All API routes are protected by ASEL's
+# existing shared-secret header; the browser callback is protected by one-time OAuth state.
+class GoogleEventRequest(BaseModel):
+    user_id: str = Field(min_length=1, max_length=100)
+    title: str = Field(min_length=1, max_length=300)
+    starts_at: datetime
+    ends_at: datetime | None = None
+    notes: str = Field(default="", max_length=3000)
+    timezone: str = Field(default="Asia/Almaty", max_length=80)
+
+class GoogleEventPatch(BaseModel):
+    user_id: str = Field(min_length=1, max_length=100)
+    title: str | None = Field(default=None, max_length=300)
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    notes: str | None = Field(default=None, max_length=3000)
+    timezone: str = Field(default="Asia/Almaty", max_length=80)
+
+@app.get("/api/google-calendar/connect")
+async def google_calendar_connect(user_id: str, x_asel_secret: str | None = Header(default=None)):
+    authorize(x_asel_secret)
+    return {"authorization_url": create_authorization_url(user_id)}
+
+@app.get("/api/google-calendar/callback")
+async def google_calendar_callback(code: str | None = None, state: str | None = None, error: str | None = None):
+    if error:
+        return {"connected": False, "message": "Google authorization was cancelled or denied"}
+    if not code or not state:
+        raise HTTPException(400, "Missing OAuth callback parameters")
+    finish_authorization(code, state)
+    return {"connected": True, "message": "Google Calendar connected. You can return to ASEL."}
+
+@app.get("/api/google-calendar/status")
+async def google_calendar_status(user_id: str, x_asel_secret: str | None = Header(default=None)):
+    authorize(x_asel_secret)
+    return connection_status(user_id)
+
+@app.get("/api/google-calendar/events")
+async def google_calendar_events(user_id: str, time_min: datetime, time_max: datetime,
+                                 max_results: int = 50, x_asel_secret: str | None = Header(default=None)):
+    authorize(x_asel_secret)
+    if time_min.tzinfo is None or time_max.tzinfo is None or time_max <= time_min:
+        raise HTTPException(400, "time_min/time_max must include timezone and form a valid range")
+    return {"items": list_google_events(user_id, time_min.isoformat(), time_max.isoformat(), max_results)}
+
+@app.post("/api/google-calendar/events")
+async def google_calendar_create_event(p: GoogleEventRequest, x_asel_secret: str | None = Header(default=None)):
+    authorize(x_asel_secret)
+    if p.starts_at.tzinfo is None or (p.ends_at and p.ends_at.tzinfo is None):
+        raise HTTPException(400, "Event dates must include timezone")
+    if p.ends_at and p.ends_at <= p.starts_at:
+        raise HTTPException(400, "Event end must be after start")
+    event = {"summary": p.title, "description": p.notes,
+             "start": {"dateTime": p.starts_at.isoformat(), "timeZone": p.timezone},
+             "end": {"dateTime": (p.ends_at or p.starts_at + timedelta(hours=1)).isoformat(), "timeZone": p.timezone}}
+    created = create_google_event(p.user_id, event)
+    return {"created": True, "event": created}
+
+@app.patch("/api/google-calendar/events/{event_id}")
+async def google_calendar_update_event(event_id: str, p: GoogleEventPatch,
+                                       x_asel_secret: str | None = Header(default=None)):
+    authorize(x_asel_secret)
+    patch = {}
+    if p.title is not None: patch["summary"] = p.title
+    if p.notes is not None: patch["description"] = p.notes
+    if p.starts_at is not None:
+        if p.starts_at.tzinfo is None: raise HTTPException(400, "starts_at must include timezone")
+        patch["start"] = {"dateTime": p.starts_at.isoformat(), "timeZone": p.timezone}
+    if p.ends_at is not None:
+        if p.ends_at.tzinfo is None: raise HTTPException(400, "ends_at must include timezone")
+        patch["end"] = {"dateTime": p.ends_at.isoformat(), "timeZone": p.timezone}
+    if not patch: raise HTTPException(400, "No event fields to update")
+    return {"updated": True, "event": update_google_event(p.user_id, event_id, patch)}
+
+@app.delete("/api/google-calendar/events/{event_id}")
+async def google_calendar_delete_event(event_id: str, user_id: str,
+                                       x_asel_secret: str | None = Header(default=None)):
+    authorize(x_asel_secret)
+    return delete_google_event(user_id, event_id)
