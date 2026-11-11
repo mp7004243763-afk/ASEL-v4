@@ -13,7 +13,7 @@ logger = logging.getLogger("asel.voice")
 # Microsoft Edge neural voices. Aida is not present in Microsoft's
 # published kk-KZ voice catalogue; Aigul is the supported female Kazakh voice.
 TTS_VOICES = {
-    "ru": "ru-RU-DariyaNeural",
+    "ru": "ru-RU-SvetlanaNeural",
     "kk": "kk-KZ-AigulNeural",
     "en": "en-US-AriaNeural",
 }
