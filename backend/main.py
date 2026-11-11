@@ -150,7 +150,7 @@ async def lifespan(app:FastAPI):
 
 app=FastAPI(title="ASEL API",version="0.7.0",lifespan=lifespan)
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=False,
-                   allow_methods=["GET","POST","DELETE"],allow_headers=["*"])
+                   allow_methods=["GET","POST","PATCH","DELETE"],allow_headers=["*"])
 
 @app.get("/health")
 async def health():
