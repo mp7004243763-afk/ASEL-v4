@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() => runApp(const AselApp());
 
@@ -47,6 +48,8 @@ class _ChatPageState extends State<ChatPage> {
     ChatMessage('Сәлем! Я Асель 💫 Чем займёмся?', false),
   ];
   bool _sending = false;
+  bool _calendarConnected = false;
+  bool _calendarChecking = false;
   String _baseUrl = 'https://YOUR_SERVER_DOMAIN';
   String _secret = '';
   String _userId = 'mobile-owner';
@@ -112,6 +115,26 @@ class _ChatPageState extends State<ChatPage> {
         TextField(controller: url, decoration: const InputDecoration(labelText: 'Адрес сервера')),
         TextField(controller: key, obscureText: true, decoration: const InputDecoration(labelText: 'Ключ доступа')),
         TextField(controller: user, decoration: const InputDecoration(labelText: 'ID пользователя (для связи Telegram)')),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Google Calendar: ${_calendarConnected ? "подключён" : "не подключён"}',
+            style: TextStyle(color: _calendarConnected ? Colors.greenAccent : Colors.white70),
+          ),
+        ),
+        Wrap(spacing: 8, children: [
+          TextButton.icon(
+            onPressed: _connectGoogleCalendar,
+            icon: const Icon(Icons.calendar_month),
+            label: const Text('Подключить Google'),
+          ),
+          TextButton.icon(
+            onPressed: _calendarChecking ? null : () => _refreshCalendarStatus(notify: true),
+            icon: const Icon(Icons.refresh),
+            label: const Text('Проверить'),
+          ),
+        ]),
       ]),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
@@ -149,6 +172,480 @@ class _ChatPageState extends State<ChatPage> {
         }, child: const Text('Сохранить')),
       ],
     ));
+  }
+
+  Future<void> _refreshCalendarStatus({bool notify = false}) async {
+    if (_secret.isEmpty || _baseUrl.contains('YOUR_SERVER_DOMAIN')) return;
+    setState(() => _calendarChecking = true);
+    try {
+      final uri = Uri.parse('${_baseUrl.replaceAll(RegExp(r'/
+    final text = _controller.text.trim();
+    if (text.isEmpty || _sending) return;
+    _controller.clear();
+    setState(() { _messages.add(ChatMessage(text, true)); _sending = true; });
+    try {
+      final uri = Uri.parse('${_baseUrl.replaceAll(RegExp(r'/$'), '')}/api/chat');
+      final response = await http.post(uri,
+        headers: {'Content-Type': 'application/json', 'X-Asel-Secret': _secret},
+        body: jsonEncode({'user_id': _userId, 'message': text}),
+      ).timeout(const Duration(seconds: 60));
+      if (response.statusCode != 200) {
+        throw Exception('Сервер ответил ${response.statusCode}: ${response.body}');
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      setState(() => _messages.add(ChatMessage(data['reply']?.toString() ?? 'Пустой ответ', false)));
+      final encoded = data['audio_base64']?.toString();
+      if (encoded != null && encoded.isNotEmpty) {
+        final bytes = base64Decode(encoded);
+        final dir = await getTemporaryDirectory();
+        final audioPath = '${dir.path}/asel_reply.mp3';
+        final audioFile = File(audioPath);
+        await audioFile.writeAsBytes(bytes, flush: true);
+        await _player.play(DeviceFileSource(audioPath));
+      }
+    } catch (e) {
+      setState(() => _messages.add(ChatMessage('Не удалось связаться с сервером. Проверь адрес, ключ и подключение. ($e)', false)));
+    } finally {
+      setState(() => _sending = false);
+      if (_scroll.hasClients) _scroll.animateTo(_scroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    }
+  }
+
+  Future<void> _toggleRecording() async {
+    if (_sending) return;
+    try {
+      if (!_recording) {
+        final permitted = await _recorder.hasPermission();
+        if (!permitted) {
+          setState(() => _messages.add(ChatMessage('Нужно разрешить доступ к микрофону.', false)));
+          return;
+        }
+        final dir = await getTemporaryDirectory();
+        final path = '${dir.path}/asel_voice_${DateTime.now().millisecondsSinceEpoch}.wav';
+        await _recorder.start(
+          const RecordConfig(
+            encoder: AudioEncoder.wav,
+            sampleRate: 16000,
+            numChannels: 1,
+          ),
+          path: path,
+        );
+        setState(() => _recording = true);
+      } else {
+        final path = await _recorder.stop();
+        setState(() { _recording = false; _sending = true; });
+        if (path == null) throw Exception('Не удалось сохранить запись');
+        await _sendVoice(path);
+      }
+    } catch (e) {
+      setState(() {
+        _recording = false;
+        _sending = false;
+        _messages.add(ChatMessage('Не получилось записать голос: $e', false));
+      });
+    }
+  }
+
+  Future<void> _sendVoice(String path) async {
+    try {
+      final uri = Uri.parse('${_baseUrl.replaceAll(RegExp(r'/$'), '')}/api/voice');
+      final request = http.MultipartRequest('POST', uri)
+        ..headers['X-Asel-Secret'] = _secret
+        ..fields['user_id'] = _userId
+        ..files.add(await http.MultipartFile.fromPath('file', path, filename: 'voice.wav'));
+      final streamed = await request.send().timeout(const Duration(seconds: 120));
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode != 200) {
+        throw Exception('Сервер ответил ${response.statusCode}: ${response.body}');
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final transcript = data['transcript']?.toString() ?? '';
+      final reply = data['reply']?.toString() ?? 'Пустой ответ';
+      setState(() {
+        if (transcript.isNotEmpty) _messages.add(ChatMessage('🎙 $transcript', true));
+        _messages.add(ChatMessage(reply, false));
+      });
+      final encoded = data['audio_base64']?.toString();
+      if (encoded != null && encoded.isNotEmpty) {
+        final bytes = base64Decode(encoded);
+        final dir = await getTemporaryDirectory();
+        final audioPath = '${dir.path}/asel_reply.mp3';
+        final audioFile = File(audioPath);
+        await audioFile.writeAsBytes(bytes, flush: true);
+        await _player.play(DeviceFileSource(audioPath));
+      }
+    } catch (e) {
+      setState(() => _messages.add(ChatMessage('Не удалось обработать голос. Проверь сервер, ключ и настройки аудио. ($e)', false)));
+    } finally {
+      setState(() => _sending = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scroll.dispose();
+    _recorder.dispose();
+    _player.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: const Row(children: [
+        CircleAvatar(
+          radius: 22,
+          backgroundColor: Color(0xff252330),
+          backgroundImage: AssetImage('assets/avatars/asel_primary_black_hoodie.webp'),
+        ),
+        SizedBox(width: 10),
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('ASEL', style: TextStyle(fontWeight: FontWeight.bold)),
+          Text('Персональная помощница', style: TextStyle(fontSize: 11, color: Colors.white60)),
+        ])
+      ]),
+      actions: [IconButton(onPressed: _settings, icon: const Icon(Icons.settings_outlined))],
+    ),
+    body: Column(children: [
+      Expanded(child: ListView.builder(
+        controller: _scroll, padding: const EdgeInsets.all(16),
+        itemCount: _messages.length + (_sending ? 1 : 0),
+        itemBuilder: (context, i) {
+          if (_sending && i == _messages.length) {
+            return const Align(alignment: Alignment.centerLeft, child: Padding(
+              padding: EdgeInsets.all(8), child: Text('Асель печатает…', style: TextStyle(color: Colors.white54))));
+          }
+          final m = _messages[i];
+          final bubble = Container(
+            constraints: const BoxConstraints(maxWidth: 320),
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+            decoration: BoxDecoration(
+              color: m.fromUser ? const Color(0xff70427f) : const Color(0xff252330),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Text(m.text, style: const TextStyle(fontSize: 15, height: 1.35)),
+          );
+          if (m.fromUser) {
+            return Align(alignment: Alignment.centerRight, child: bubble);
+          }
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              const CircleAvatar(
+                radius: 13,
+                backgroundImage: AssetImage('assets/avatars/asel_primary_black_hoodie.webp'),
+              ),
+              const SizedBox(width: 7),
+              Flexible(child: bubble),
+            ]),
+          );
+        },
+      )),
+      SafeArea(child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        child: Row(children: [
+          Expanded(child: TextField(
+            controller: _controller, minLines: 1, maxLines: 5,
+            textInputAction: TextInputAction.send, onSubmitted: (_) => _send(),
+            decoration: InputDecoration(
+              hintText: 'Напиши Асель…', filled: true, fillColor: const Color(0xff252330),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            ),
+          )),
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: _recording ? 'Остановить запись' : 'Голосовое сообщение',
+            onPressed: _sending ? null : _toggleRecording,
+            icon: Icon(_recording ? Icons.stop_circle_outlined : Icons.mic_none),
+            color: _recording ? Colors.redAccent : null,
+          ),
+          IconButton.filled(onPressed: _sending || _recording ? null : _send, icon: const Icon(Icons.arrow_upward)),
+        ]),
+      )),
+    ]),
+  );
+}
+), '')}/api/google-calendar/status')
+          .replace(queryParameters: {'user_id': _userId});
+      final response = await http.get(uri, headers: {'X-Asel-Secret': _secret})
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode != 200) {
+        throw Exception('Сервер ответил ${response.statusCode}: ${response.body}');
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final connected = data['connected'] == true;
+      if (mounted) {
+        setState(() => _calendarConnected = connected);
+        if (notify) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(connected
+                ? 'Google Calendar подключён'
+                : 'Google Calendar пока не подключён'),
+          ));
+        }
+      }
+    } catch (e) {
+      if (mounted && notify) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось проверить календарь: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _calendarChecking = false);
+    }
+  }
+
+  Future<void> _connectGoogleCalendar() async {
+    if (_secret.isEmpty || _baseUrl.contains('YOUR_SERVER_DOMAIN')) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Сначала сохрани адрес сервера и ключ доступа в настройках'),
+      ));
+      return;
+    }
+    try {
+      final uri = Uri.parse('${_baseUrl.replaceAll(RegExp(r'/
+    final text = _controller.text.trim();
+    if (text.isEmpty || _sending) return;
+    _controller.clear();
+    setState(() { _messages.add(ChatMessage(text, true)); _sending = true; });
+    try {
+      final uri = Uri.parse('${_baseUrl.replaceAll(RegExp(r'/$'), '')}/api/chat');
+      final response = await http.post(uri,
+        headers: {'Content-Type': 'application/json', 'X-Asel-Secret': _secret},
+        body: jsonEncode({'user_id': _userId, 'message': text}),
+      ).timeout(const Duration(seconds: 60));
+      if (response.statusCode != 200) {
+        throw Exception('Сервер ответил ${response.statusCode}: ${response.body}');
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      setState(() => _messages.add(ChatMessage(data['reply']?.toString() ?? 'Пустой ответ', false)));
+      final encoded = data['audio_base64']?.toString();
+      if (encoded != null && encoded.isNotEmpty) {
+        final bytes = base64Decode(encoded);
+        final dir = await getTemporaryDirectory();
+        final audioPath = '${dir.path}/asel_reply.mp3';
+        final audioFile = File(audioPath);
+        await audioFile.writeAsBytes(bytes, flush: true);
+        await _player.play(DeviceFileSource(audioPath));
+      }
+    } catch (e) {
+      setState(() => _messages.add(ChatMessage('Не удалось связаться с сервером. Проверь адрес, ключ и подключение. ($e)', false)));
+    } finally {
+      setState(() => _sending = false);
+      if (_scroll.hasClients) _scroll.animateTo(_scroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    }
+  }
+
+  Future<void> _toggleRecording() async {
+    if (_sending) return;
+    try {
+      if (!_recording) {
+        final permitted = await _recorder.hasPermission();
+        if (!permitted) {
+          setState(() => _messages.add(ChatMessage('Нужно разрешить доступ к микрофону.', false)));
+          return;
+        }
+        final dir = await getTemporaryDirectory();
+        final path = '${dir.path}/asel_voice_${DateTime.now().millisecondsSinceEpoch}.wav';
+        await _recorder.start(
+          const RecordConfig(
+            encoder: AudioEncoder.wav,
+            sampleRate: 16000,
+            numChannels: 1,
+          ),
+          path: path,
+        );
+        setState(() => _recording = true);
+      } else {
+        final path = await _recorder.stop();
+        setState(() { _recording = false; _sending = true; });
+        if (path == null) throw Exception('Не удалось сохранить запись');
+        await _sendVoice(path);
+      }
+    } catch (e) {
+      setState(() {
+        _recording = false;
+        _sending = false;
+        _messages.add(ChatMessage('Не получилось записать голос: $e', false));
+      });
+    }
+  }
+
+  Future<void> _sendVoice(String path) async {
+    try {
+      final uri = Uri.parse('${_baseUrl.replaceAll(RegExp(r'/$'), '')}/api/voice');
+      final request = http.MultipartRequest('POST', uri)
+        ..headers['X-Asel-Secret'] = _secret
+        ..fields['user_id'] = _userId
+        ..files.add(await http.MultipartFile.fromPath('file', path, filename: 'voice.wav'));
+      final streamed = await request.send().timeout(const Duration(seconds: 120));
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode != 200) {
+        throw Exception('Сервер ответил ${response.statusCode}: ${response.body}');
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final transcript = data['transcript']?.toString() ?? '';
+      final reply = data['reply']?.toString() ?? 'Пустой ответ';
+      setState(() {
+        if (transcript.isNotEmpty) _messages.add(ChatMessage('🎙 $transcript', true));
+        _messages.add(ChatMessage(reply, false));
+      });
+      final encoded = data['audio_base64']?.toString();
+      if (encoded != null && encoded.isNotEmpty) {
+        final bytes = base64Decode(encoded);
+        final dir = await getTemporaryDirectory();
+        final audioPath = '${dir.path}/asel_reply.mp3';
+        final audioFile = File(audioPath);
+        await audioFile.writeAsBytes(bytes, flush: true);
+        await _player.play(DeviceFileSource(audioPath));
+      }
+    } catch (e) {
+      setState(() => _messages.add(ChatMessage('Не удалось обработать голос. Проверь сервер, ключ и настройки аудио. ($e)', false)));
+    } finally {
+      setState(() => _sending = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scroll.dispose();
+    _recorder.dispose();
+    _player.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: const Row(children: [
+        CircleAvatar(
+          radius: 22,
+          backgroundColor: Color(0xff252330),
+          backgroundImage: AssetImage('assets/avatars/asel_primary_black_hoodie.webp'),
+        ),
+        SizedBox(width: 10),
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('ASEL', style: TextStyle(fontWeight: FontWeight.bold)),
+          Text('Персональная помощница', style: TextStyle(fontSize: 11, color: Colors.white60)),
+        ])
+      ]),
+      actions: [IconButton(onPressed: _settings, icon: const Icon(Icons.settings_outlined))],
+    ),
+    body: Column(children: [
+      Expanded(child: ListView.builder(
+        controller: _scroll, padding: const EdgeInsets.all(16),
+        itemCount: _messages.length + (_sending ? 1 : 0),
+        itemBuilder: (context, i) {
+          if (_sending && i == _messages.length) {
+            return const Align(alignment: Alignment.centerLeft, child: Padding(
+              padding: EdgeInsets.all(8), child: Text('Асель печатает…', style: TextStyle(color: Colors.white54))));
+          }
+          final m = _messages[i];
+          final bubble = Container(
+            constraints: const BoxConstraints(maxWidth: 320),
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+            decoration: BoxDecoration(
+              color: m.fromUser ? const Color(0xff70427f) : const Color(0xff252330),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Text(m.text, style: const TextStyle(fontSize: 15, height: 1.35)),
+          );
+          if (m.fromUser) {
+            return Align(alignment: Alignment.centerRight, child: bubble);
+          }
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              const CircleAvatar(
+                radius: 13,
+                backgroundImage: AssetImage('assets/avatars/asel_primary_black_hoodie.webp'),
+              ),
+              const SizedBox(width: 7),
+              Flexible(child: bubble),
+            ]),
+          );
+        },
+      )),
+      SafeArea(child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        child: Row(children: [
+          Expanded(child: TextField(
+            controller: _controller, minLines: 1, maxLines: 5,
+            textInputAction: TextInputAction.send, onSubmitted: (_) => _send(),
+            decoration: InputDecoration(
+              hintText: 'Напиши Асель…', filled: true, fillColor: const Color(0xff252330),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            ),
+          )),
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: _recording ? 'Остановить запись' : 'Голосовое сообщение',
+            onPressed: _sending ? null : _toggleRecording,
+            icon: Icon(_recording ? Icons.stop_circle_outlined : Icons.mic_none),
+            color: _recording ? Colors.redAccent : null,
+          ),
+          IconButton.filled(onPressed: _sending || _recording ? null : _send, icon: const Icon(Icons.arrow_upward)),
+        ]),
+      )),
+    ]),
+  );
+}
+), '')}/api/google-calendar/connect')
+          .replace(queryParameters: {'user_id': _userId});
+      final response = await http.get(uri, headers: {'X-Asel-Secret': _secret})
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode != 200) {
+        throw Exception('Сервер ответил ${response.statusCode}: ${response.body}');
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final authorizationUrl = data['authorization_url']?.toString() ?? '';
+      if (authorizationUrl.isEmpty) {
+        throw Exception('Сервер не вернул ссылку авторизации');
+      }
+      final launched = await launchUrl(
+        Uri.parse(authorizationUrl),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) throw Exception('Не удалось открыть страницу Google');
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Подключение Google Calendar'),
+          content: const Text(
+            'В браузере выбери Google-аккаунт и разреши доступ к календарю. '
+            'После успешного подтверждения вернись в ASEL и нажми «Проверить подключение».',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Закрыть'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                _refreshCalendarStatus(notify: true);
+              },
+              child: const Text('Проверить подключение'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось начать подключение Google: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _send() async {
