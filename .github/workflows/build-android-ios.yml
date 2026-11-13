@@ -39,19 +39,24 @@ jobs:
             flutter create --platforms=android .
           fi
 
-      - name: Ensure Internet permission
+      - name: Ensure Internet and microphone permissions
         working-directory: ASEL_Telegram_Android_iOS/mobile
         run: |
           python3 - <<'PY'
           from pathlib import Path
           manifest = Path("android/app/src/main/AndroidManifest.xml")
           text = manifest.read_text()
-          permission = '    <uses-permission android:name="android.permission.INTERNET" />'
-          if permission not in text:
-              marker = "    <application"
-              if marker not in text:
-                  raise SystemExit("AndroidManifest.xml has no <application> tag")
-              manifest.write_text(text.replace(marker, permission + "\\n" + marker, 1))
+          permissions = [
+              '    <uses-permission android:name="android.permission.INTERNET" />',
+              '    <uses-permission android:name="android.permission.RECORD_AUDIO" />',
+          ]
+          marker = "    <application"
+          if marker not in text:
+              raise SystemExit("AndroidManifest.xml has no <application> tag")
+          for permission in permissions:
+              if permission not in text:
+                  text = text.replace(marker, permission + "\\n" + marker, 1)
+          manifest.write_text(text)
           PY
 
       - name: Install dependencies
