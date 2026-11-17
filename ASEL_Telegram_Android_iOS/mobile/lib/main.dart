@@ -319,6 +319,13 @@ class _ChatPageState extends State<ChatPage> {
         );
         return;
       }
+      final totalBytes = result.files.fold<int>(0, (sum, file) => sum + file.size);
+      if (result.files.any((file) => file.size > 20 * 1024 * 1024) || totalBytes > 25 * 1024 * 1024) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Лимит: до 20 МБ на файл и до 25 МБ суммарно.')),
+        );
+        return;
+      }
       if (_secret.isEmpty || _baseUrl.contains('YOUR_SERVER_DOMAIN')) {
         throw Exception('Сначала настрой подключение к серверу в настройках.');
       }
