@@ -27,6 +27,8 @@ jobs:
           pip install -r backend/requirements.txt
       - name: Compile Python modules
         run: python -m compileall -q backend
+      - name: Run attachment parser tests
+        run: python -m unittest discover -s backend/tests -v
 
   android:
     name: Build ASEL V8 APK
@@ -71,7 +73,7 @@ jobs:
         run: flutter pub get
       - name: Analyze Flutter source
         working-directory: ASEL_Telegram_Android_iOS/mobile
-        run: flutter analyze lib --no-fatal-infos --no-fatal-warnings
+        run: flutter analyze lib --no-fatal-infos --no-fatal-warnings --no-fatal-infos --no-fatal-warnings
       - name: Build release APK
         working-directory: ASEL_Telegram_Android_iOS/mobile
         run: flutter build apk --release
