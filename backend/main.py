@@ -1,7 +1,7 @@
 import os, io, asyncio, secrets, logging
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Header, HTTPException, UploadFile, File
+from fastapi import FastAPI, Header, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from telegram import Update
@@ -10,7 +10,8 @@ from config import BOT_TOKEN, API_SECRET
 from db import (init_db, add_memory, list_memories, delete_memory, add_reminder,
                 list_reminders, due_reminders, mark_reminder_sent, delete_reminder,
                 add_event, list_events, delete_event, create_link_code, redeem_link_code, get_history, database_status)
-from ai import ask_asel
+from ai import ask_asel, ask_asel_with_attachments
+from attachments import extract_attachment, AttachmentError, MAX_FILE_BYTES
 from voice import transcribe_audio, synthesize_speech
 from google_calendar import (init_google_calendar_db, create_authorization_url, finish_authorization,
     connection_status, list_google_events, create_google_event, update_google_event, delete_google_event)
@@ -187,6 +188,67 @@ async def chat(payload:ChatRequest,x_asel_secret:str|None=Header(default=None)):
     except Exception as e:
         logger.exception("AI provider error in /api/chat")
         raise HTTPException(502,"AI provider error") from e
+
+
+@app.post("/api/chat/attachments")
+async def chat_attachments(
+    files: list[UploadFile] = File(...),
+    user_id: str = Form(..., min_length=1, max_length=100),
+    message: str = Form(default="Проанализируй прикреплённые файлы.", max_length=4000),
+    x_asel_secret: str | None = Header(default=None),
+):
+    """Analyze up to five user-owned attachments for one chat turn."""
+    authorize(x_asel_secret)
+    if not files or len(files) > 5:
+        raise HTTPException(400, "Можно прикрепить от 1 до 5 файлов за раз.")
+    text_parts = []
+    images = []
+    total_bytes = 0
+    try:
+        for upload in files:
+            raw = await upload.read(MAX_FILE_BYTES + 1)
+            total_bytes += len(raw)
+            if len(raw) > MAX_FILE_BYTES:
+                raise HTTPException(413, "Один из файлов превышает лимит 20 МБ.")
+            if total_bytes > 25 * 1024 * 1024:
+                raise HTTPException(413, "Общий размер вложений превышает 25 МБ.")
+            safe_name = (upload.filename or "attachment").replace("\\\\", "/").split("/")[-1][:180]
+            kind, extracted = extract_attachment(safe_name, raw)
+            if kind == "image":
+                images.append((safe_name, raw))
+            else:
+                text_parts.append(f"\n--- Файл: {safe_name} ---\n{extracted}")
+        if not text_parts and not images:
+            raise HTTPException(400, "Не удалось прочитать вложения.")
+        reply = await ask_asel_with_attachments(
+            user_id, message, "\n".join(text_parts), images
+        )
+        audio_b64 = ""
+        audio_error = ""
+        try:
+            import base64
+            audio_reply = await synthesize_speech(reply)
+            audio_b64 = base64.b64encode(audio_reply).decode("ascii")
+        except Exception as tts_error:
+            logger.exception("TTS failed for attachment chat")
+            audio_error = type(tts_error).__name__
+        return {
+            "reply": reply,
+            "files": [f.filename or "attachment" for f in files],
+            "audio_base64": audio_b64,
+            "audio_mime": "audio/mpeg",
+            "audio_error": audio_error,
+        }
+    except AttachmentError as exc:
+        raise HTTPException(415, str(exc)) from exc
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Attachment chat failed")
+        raise HTTPException(502, "Не удалось обработать вложения.") from exc
+
 @app.post("/api/voice")
 async def voice_chat(file:UploadFile=File(...),user_id:str="mobile-owner",x_asel_secret:str|None=Header(default=None)):
     authorize(x_asel_secret); audio=await file.read()
