@@ -314,11 +314,9 @@ class _ChatPageState extends State<ChatPage> {
       );
       if (result == null || result.files.isEmpty) return;
       if (result.files.length > 5) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Можно отправить не больше пяти файлов за раз.')),
-          );
-        }
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Можно отправить не больше пяти файлов за раз.')),
+        );
         return;
       }
       if (_secret.isEmpty || _baseUrl.contains('YOUR_SERVER_DOMAIN')) {
@@ -329,174 +327,12 @@ class _ChatPageState extends State<ChatPage> {
           : _controller.text.trim();
       setState(() {
         _sending = true;
-        _messages.add(ChatMessage('📎 ${result.files.map((f) => f.name).join(', ')}', true));
+        _messages.add(ChatMessage('📎 ' + result.files.map((f) => f.name).join(', '), true));
       });
       _controller.clear();
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('${_baseUrl.replaceAll(RegExp(r'/
-    if (_sending) return;
-    try {
-      if (!_recording) {
-        final permitted = await _recorder.hasPermission();
-        if (!permitted) {
-          setState(() => _messages.add(ChatMessage('Нужно разрешить доступ к микрофону.', false)));
-          return;
-        }
-        final dir = await getTemporaryDirectory();
-        final path = '${dir.path}/asel_voice_${DateTime.now().millisecondsSinceEpoch}.wav';
-        await _recorder.start(
-          const RecordConfig(
-            encoder: AudioEncoder.wav,
-            sampleRate: 16000,
-            numChannels: 1,
-          ),
-          path: path,
-        );
-        setState(() => _recording = true);
-      } else {
-        final path = await _recorder.stop();
-        setState(() { _recording = false; _sending = true; });
-        if (path == null) throw Exception('Не удалось сохранить запись');
-        await _sendVoice(path);
-      }
-    } catch (e) {
-      setState(() {
-        _recording = false;
-        _sending = false;
-        _messages.add(ChatMessage('Не получилось записать голос: $e', false));
-      });
-    }
-  }
-
-  Future<void> _sendVoice(String path) async {
-    try {
-      final uri = Uri.parse('${_baseUrl.replaceAll(RegExp(r'/$'), '')}/api/voice');
-      final request = http.MultipartRequest('POST', uri)
-        ..headers['X-Asel-Secret'] = _secret
-        ..fields['user_id'] = _userId
-        ..files.add(await http.MultipartFile.fromPath('file', path, filename: 'voice.wav'));
-      final streamed = await request.send().timeout(const Duration(seconds: 120));
-      final response = await http.Response.fromStream(streamed);
-      if (response.statusCode != 200) {
-        throw Exception('Сервер ответил ${response.statusCode}: ${response.body}');
-      }
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final transcript = data['transcript']?.toString() ?? '';
-      final reply = data['reply']?.toString() ?? 'Пустой ответ';
-      setState(() {
-        if (transcript.isNotEmpty) _messages.add(ChatMessage('🎙 $transcript', true));
-        _messages.add(ChatMessage(reply, false));
-      });
-      final encoded = data['audio_base64']?.toString();
-      if (encoded != null && encoded.isNotEmpty) {
-        final bytes = base64Decode(encoded);
-        final dir = await getTemporaryDirectory();
-        final audioPath = '${dir.path}/asel_reply.mp3';
-        final audioFile = File(audioPath);
-        await audioFile.writeAsBytes(bytes, flush: true);
-        await _player.play(DeviceFileSource(audioPath));
-      }
-    } catch (e) {
-      setState(() => _messages.add(ChatMessage('Не удалось обработать голос. Проверь сервер, ключ и настройки аудио. ($e)', false)));
-    } finally {
-      setState(() => _sending = false);
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    _scroll.dispose();
-    _recorder.dispose();
-    _player.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Row(children: [
-        CircleAvatar(
-          radius: 22,
-          backgroundColor: Color(0xff252330),
-          backgroundImage: AssetImage('assets/avatars/asel_primary_black_hoodie.webp'),
-        ),
-        SizedBox(width: 10),
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('ASEL', style: TextStyle(fontWeight: FontWeight.bold)),
-          Text('Персональная помощница', style: TextStyle(fontSize: 11, color: Colors.white60)),
-        ])
-      ]),
-      actions: [IconButton(onPressed: _settings, icon: const Icon(Icons.settings_outlined))],
-    ),
-    body: Column(children: [
-      Expanded(child: ListView.builder(
-        controller: _scroll, padding: const EdgeInsets.all(16),
-        itemCount: _messages.length + (_sending ? 1 : 0),
-        itemBuilder: (context, i) {
-          if (_sending && i == _messages.length) {
-            return const Align(alignment: Alignment.centerLeft, child: Padding(
-              padding: EdgeInsets.all(8), child: Text('Асель печатает…', style: TextStyle(color: Colors.white54))));
-          }
-          final m = _messages[i];
-          final bubble = Container(
-            constraints: const BoxConstraints(maxWidth: 320),
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
-            decoration: BoxDecoration(
-              color: m.fromUser ? const Color(0xff70427f) : const Color(0xff252330),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Text(m.text, style: const TextStyle(fontSize: 15, height: 1.35)),
-          );
-          if (m.fromUser) {
-            return Align(alignment: Alignment.centerRight, child: bubble);
-          }
-          return Align(
-            alignment: Alignment.centerLeft,
-            child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              const CircleAvatar(
-                radius: 13,
-                backgroundImage: AssetImage('assets/avatars/asel_primary_black_hoodie.webp'),
-              ),
-              const SizedBox(width: 7),
-              Flexible(child: bubble),
-            ]),
-          );
-        },
-      )),
-      SafeArea(child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-        child: Row(children: [
-          Expanded(child: TextField(
-            controller: _controller, minLines: 1, maxLines: 5,
-            textInputAction: TextInputAction.send, onSubmitted: (_) => _send(),
-            decoration: InputDecoration(
-              hintText: 'Напиши Асель…', filled: true, fillColor: const Color(0xff252330),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-            ),
-          )),
-          const SizedBox(width: 8),
-          IconButton(
-            tooltip: 'Прикрепить файлы',
-            onPressed: _sending || _recording ? null : _pickAndSendFiles,
-            icon: const Icon(Icons.attach_file),
-          ),
-          IconButton(
-            tooltip: _recording ? 'Остановить запись' : 'Голосовое сообщение',
-            onPressed: _sending ? null : _toggleRecording,
-            icon: Icon(_recording ? Icons.stop_circle_outlined : Icons.mic_none),
-            color: _recording ? Colors.redAccent : null,
-          ),
-          IconButton.filled(onPressed: _sending || _recording ? null : _send, icon: const Icon(Icons.arrow_upward)),
-        ]),
-      )),
-    ]),
-  );
-}
-), '')}/api/chat/attachments'),
+        Uri.parse(_baseUrl).resolve('/api/chat/attachments'),
       )
         ..headers['X-Asel-Secret'] = _secret
         ..fields['user_id'] = _userId
@@ -508,13 +344,13 @@ class _ChatPageState extends State<ChatPage> {
         } else if (picked.path != null) {
           request.files.add(await http.MultipartFile.fromPath('files', picked.path!, filename: picked.name));
         } else {
-          throw Exception('Не удалось прочитать файл ${picked.name}');
+          throw Exception('Не удалось прочитать файл ' + picked.name);
         }
       }
       final streamed = await request.send().timeout(const Duration(seconds: 180));
       final response = await http.Response.fromStream(streamed);
       if (response.statusCode != 200) {
-        throw Exception('Сервер ответил ${response.statusCode}: ${response.body}');
+        throw Exception('Сервер ответил ' + response.statusCode.toString() + ': ' + response.body);
       }
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       setState(() => _messages.add(ChatMessage(data['reply']?.toString() ?? 'Пустой ответ', false)));
@@ -522,17 +358,16 @@ class _ChatPageState extends State<ChatPage> {
       if (encoded != null && encoded.isNotEmpty) {
         final audioBytes = base64Decode(encoded);
         final dir = await getTemporaryDirectory();
-        final audioPath = '${dir.path}/asel_reply.mp3';
+        final audioPath = dir.path + '/asel_reply.mp3';
         await File(audioPath).writeAsBytes(audioBytes, flush: true);
         await _player.play(DeviceFileSource(audioPath));
       }
     } catch (e) {
-      if (mounted) setState(() => _messages.add(ChatMessage('Не удалось обработать файлы: $e', false)));
+      if (mounted) setState(() => _messages.add(ChatMessage('Не удалось обработать файлы: ' + e.toString(), false)));
     } finally {
       if (mounted) setState(() => _sending = false);
     }
   }
-
   Future<void> _toggleRecording() async {
     if (_sending) return;
     try {
