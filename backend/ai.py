@@ -178,7 +178,11 @@ async def ask_asel_with_attachments(user_id: str, user_text: str, document_conte
     answer = (response.choices[0].message.content or "").strip()
     if not answer:
         answer = "Жаным, не получилось прочитать содержимое. Попробуй другой файл."
-    stored_prompt = user_text + ("\n[Прикреплены файлы: содержимое обработано]" if document_context or images else "")
+    stored_prompt = user_text
+    if document_context:
+        stored_prompt += "\n[Текст вложений для последующих вопросов]\n" + document_context[:10000]
+    if images:
+        stored_prompt += "\n[Изображения были переданы модели для визуального анализа: " + ", ".join(name for name, _ in images) + "]"
     add_message(user_id, "user", stored_prompt[:12000])
     add_message(user_id, "assistant", answer)
     return answer
