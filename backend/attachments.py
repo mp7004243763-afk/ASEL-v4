@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import io
 import os
+import zipfile
 from pathlib import PurePath
 
 MAX_FILE_BYTES = 20 * 1024 * 1024
@@ -38,6 +39,34 @@ def _check_signature(name: str, data: bytes) -> None:
             raise AttachmentError("Содержимое изображения не соответствует расширению.")
     if ext in {".docx", ".xlsx", ".pptx"} and not data.startswith(b"PK\x03\x04"):
         raise AttachmentError("Файл Office повреждён или имеет неверный формат.")
+
+
+
+def _check_office_archive(data: bytes) -> None:
+    """Reject malformed Office ZIPs and common archive-bomb/path tricks."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            entries = archive.infolist()
+            if len(entries) > 500:
+                raise AttachmentError("В документе слишком много вложенных элементов.")
+            total_uncompressed = 0
+            for item in entries:
+                normalized = item.filename.replace("\\", "/")
+                if normalized.startswith("/") or ".." in normalized.split("/"):
+                    raise AttachmentError("В документе обнаружен небезопасный путь.")
+                if item.flag_bits & 0x1:
+                    raise AttachmentError("Зашифрованные Office-документы пока не поддерживаются.")
+                total_uncompressed += item.file_size
+                if item.file_size > 50 * 1024 * 1024:
+                    raise AttachmentError("Вложенный элемент документа слишком большой.")
+                if item.compress_size and item.file_size / item.compress_size > 100:
+                    raise AttachmentError("Документ имеет подозрительную степень сжатия.")
+            if total_uncompressed > 100 * 1024 * 1024:
+                raise AttachmentError("Распакованный размер документа превышает лимит 100 МБ.")
+    except AttachmentError:
+        raise
+    except Exception as exc:
+        raise AttachmentError("Office-документ повреждён.") from exc
 
 
 def extract_attachment(name: str, data: bytes) -> tuple[str, str]:
