@@ -37,8 +37,10 @@ def _check_signature(name: str, data: bytes) -> None:
         }
         if not signatures[ext]:
             raise AttachmentError("Содержимое изображения не соответствует расширению.")
-    if ext in {".docx", ".xlsx", ".pptx"} and not data.startswith(b"PK\x03\x04"):
-        raise AttachmentError("Файл Office повреждён или имеет неверный формат.")
+    if ext in {".docx", ".xlsx", ".pptx"}:
+        if not data.startswith(b"PK\x03\x04"):
+            raise AttachmentError("Файл Office повреждён или имеет неверный формат.")
+        _check_office_archive(data)
 
 
 
