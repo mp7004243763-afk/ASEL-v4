@@ -1,0 +1,83 @@
+name: Build ASEL V8 Android and validate backend
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [asel-v8]
+    paths:
+      - "backend/**"
+      - "ASEL_Telegram_Android_iOS/mobile/**"
+      - ".github/workflows/build-asel-v8.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  backend-check:
+    name: Validate backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+      - name: Compile Python modules
+        run: python -m compileall -q backend
+
+  android:
+    name: Build ASEL V8 APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Ensure Android platform
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: |
+          if [ ! -d android ]; then
+            flutter create --platforms=android .
+          fi
+      - name: Ensure Internet and microphone permissions
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text()
+          permissions = [
+              '    <uses-permission android:name="android.permission.INTERNET" />',
+              '    <uses-permission android:name="android.permission.RECORD_AUDIO" />',
+          ]
+          marker = "    <application"
+          if marker not in text:
+              raise SystemExit("AndroidManifest.xml has no <application> tag")
+          for permission in permissions:
+              if permission not in text:
+                  text = text.replace(marker, permission + "\\n" + marker, 1)
+          manifest.write_text(text)
+          PY
+      - name: Install Flutter dependencies
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: flutter pub get
+      - name: Analyze Flutter source
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: flutter analyze
+      - name: Build release APK
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: flutter build apk --release
+      - name: Upload V8 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASEL-V8-Android-APK
+          path: ASEL_Telegram_Android_iOS/mobile/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
