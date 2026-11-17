@@ -514,6 +514,11 @@ class _ChatPageState extends State<ChatPage> {
           )),
           const SizedBox(width: 8),
           IconButton(
+            tooltip: 'Прикрепить файлы',
+            onPressed: _sending || _recording ? null : _pickAndSendFiles,
+            icon: const Icon(Icons.attach_file),
+          ),
+          IconButton(
             tooltip: _recording ? 'Остановить запись' : 'Голосовое сообщение',
             onPressed: _sending ? null : _toggleRecording,
             icon: Icon(_recording ? Icons.stop_circle_outlined : Icons.mic_none),
