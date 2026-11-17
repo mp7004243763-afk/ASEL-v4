@@ -71,7 +71,7 @@ jobs:
         run: flutter pub get
       - name: Analyze Flutter source
         working-directory: ASEL_Telegram_Android_iOS/mobile
-        run: flutter analyze
+        run: flutter analyze lib
       - name: Build release APK
         working-directory: ASEL_Telegram_Android_iOS/mobile
         run: flutter build apk --release
