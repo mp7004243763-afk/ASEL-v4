@@ -49,6 +49,18 @@ jobs:
           if [ ! -d android ]; then
             flutter create --platforms=android .
           fi
+      - name: Set Android compile SDK 36
+        working-directory: ASEL_Telegram_Android_iOS/mobile
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          gradle = Path("android/app/build.gradle.kts")
+          text = gradle.read_text()
+          text = text.replace("compileSdk = flutter.compileSdkVersion", "compileSdk = 36")
+          gradle.write_text(text)
+          if "compileSdk = 36" not in text:
+              raise SystemExit("Could not set Android compileSdk to 36")
+          PY
       - name: Ensure Internet and microphone permissions
         working-directory: ASEL_Telegram_Android_iOS/mobile
         run: |
@@ -73,7 +85,7 @@ jobs:
         run: flutter pub get
       - name: Analyze Flutter source
         working-directory: ASEL_Telegram_Android_iOS/mobile
-        run: flutter analyze lib --no-fatal-infos --no-fatal-warnings --no-fatal-infos --no-fatal-warnings
+        run: flutter analyze lib --no-fatal-infos --no-fatal-warnings
       - name: Build release APK
         working-directory: ASEL_Telegram_Android_iOS/mobile
         run: flutter build apk --release
