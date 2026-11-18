@@ -54,12 +54,29 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          gradle = Path("android/app/build.gradle.kts")
+          candidates = [
+              Path("android/app/build.gradle"),
+              Path("android/app/build.gradle.kts"),
+          ]
+          gradle = next((p for p in candidates if p.exists()), None)
+          if gradle is None:
+              raise SystemExit("Android app Gradle file not found")
           text = gradle.read_text()
-          text = text.replace("compileSdk = flutter.compileSdkVersion", "compileSdk = 36")
+          import re
+          patterns = [
+              (r"compileSdk\\s*=\\s*flutter\\.compileSdkVersion", "compileSdk = 36"),
+              (r"compileSdk\\s+flutter\\.compileSdkVersion", "compileSdk 36"),
+              (r"compileSdkVersion\\s+flutter\\.compileSdkVersion", "compileSdkVersion 36"),
+              (r"compileSdkVersion\\s*=\\s*flutter\\.compileSdkVersion", "compileSdkVersion = 36"),
+          ]
+          for pattern, replacement in patterns:
+              text, count = re.subn(pattern, replacement, text)
+              if count:
+                  break
+          if not re.search(r"compileSdk(?:Version)?\\s*(?:=\\s*)?36", text):
+              raise SystemExit(f"Could not set compile SDK 36 in {gradle}")
           gradle.write_text(text)
-          if "compileSdk = 36" not in text:
-              raise SystemExit("Could not set Android compileSdk to 36")
+          print(f"Set compile SDK 36 in {gradle}")
           PY
       - name: Ensure Internet and microphone permissions
         working-directory: ASEL_Telegram_Android_iOS/mobile
