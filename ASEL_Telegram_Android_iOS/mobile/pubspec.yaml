@@ -13,7 +13,7 @@ dependencies:
   audioplayers: ^6.1.0
   path_provider: ^2.1.5
   url_launcher: ^6.3.1
-  file_picker: ^8.1.7
+  file_picker: ^10.3.10
 dev_dependencies:
   flutter_test:
     sdk: flutter
