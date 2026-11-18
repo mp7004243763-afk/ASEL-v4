@@ -64,16 +64,16 @@ jobs:
           text = gradle.read_text()
           import re
           patterns = [
-              (r"compileSdk\\s*=\\s*flutter\\.compileSdkVersion", "compileSdk = 36"),
-              (r"compileSdk\\s+flutter\\.compileSdkVersion", "compileSdk 36"),
-              (r"compileSdkVersion\\s+flutter\\.compileSdkVersion", "compileSdkVersion 36"),
-              (r"compileSdkVersion\\s*=\\s*flutter\\.compileSdkVersion", "compileSdkVersion = 36"),
+              (r"compileSdk\s*=\s*flutter\.compileSdkVersion", "compileSdk = 36"),
+              (r"compileSdk\s+flutter\.compileSdkVersion", "compileSdk 36"),
+              (r"compileSdkVersion\s+flutter\.compileSdkVersion", "compileSdkVersion 36"),
+              (r"compileSdkVersion\s*=\s*flutter\.compileSdkVersion", "compileSdkVersion = 36"),
           ]
           for pattern, replacement in patterns:
               text, count = re.subn(pattern, replacement, text)
               if count:
                   break
-          if not re.search(r"compileSdk(?:Version)?\\s*(?:=\\s*)?36", text):
+          if not re.search(r"compileSdk(?:Version)?\s*(?:=\s*)?36", text):
               raise SystemExit(f"Could not set compile SDK 36 in {gradle}")
           gradle.write_text(text)
           print(f"Set compile SDK 36 in {gradle}")
