@@ -1,7 +1,7 @@
 import os, io, asyncio, secrets, logging
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Header, HTTPException, UploadFile, File
+from fastapi import FastAPI, Header, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from telegram import Update
@@ -190,16 +190,16 @@ async def chat(payload:ChatRequest,x_asel_secret:str|None=Header(default=None)):
 
 @app.post("/api/chat/attachments")
 async def chat_attachments(
-    user_id: str,
-    message: str = "Изучи прикреплённые файлы и расскажи, что в них.",
     files: list[UploadFile] = File(...),
+    user_id: str = Form(..., min_length=1, max_length=100),
+    message: str = Form(default="Проанализируй прикреплённые файлы.", max_length=4000),
     x_asel_secret: str | None = Header(default=None),
 ):
     authorize(x_asel_secret)
     from attachments import AttachmentError, extract_attachment, MAX_FILE_BYTES
     from ai import ask_asel_with_attachments
     if not files or len(files) > 5:
-        raise HTTPException(400, "Можно отправить от одного до пяти файлов.")
+        raise HTTPException(400, "Можно прикрепить от 1 до 5 файлов за раз.")
     document_parts = []
     images = []
     total_bytes = 0
@@ -210,32 +210,37 @@ async def chat_attachments(
             if len(raw) > MAX_FILE_BYTES:
                 raise HTTPException(413, "Один из файлов превышает лимит 20 МБ.")
             if total_bytes > 25 * 1024 * 1024:
-                raise HTTPException(413, "Общий размер файлов превышает 25 МБ.")
-            filename = uploaded.filename or "attachment"
+                raise HTTPException(413, "Общий размер вложений превышает 25 МБ.")
+            filename = (uploaded.filename or "attachment").replace("\\", "/").split("/")[-1][:180]
             kind, extracted = extract_attachment(filename, raw)
             if kind == "image":
                 images.append((filename, raw))
             else:
-                document_parts.append(f"Файл: {filename}\\n{extracted}")
-        context = "\\n\\n".join(document_parts)
+                document_parts.append(f"\n--- Файл: {filename} ---\n{extracted}")
+        if not document_parts and not images:
+            raise HTTPException(400, "Не удалось прочитать вложения.")
+        context = "\n".join(document_parts)
         reply = await ask_asel_with_attachments(user_id, message, context, images)
         import base64
         audio_b64 = ""
+        audio_error = ""
         try:
             audio = await synthesize_speech(reply)
             audio_b64 = base64.b64encode(audio).decode("ascii")
-        except Exception:
-            logger.exception("TTS failed in /api/chat/attachments; returning text reply")
-        return {"reply": reply, "audio_base64": audio_b64, "audio_mime": "audio/mpeg"}
+        except Exception as tts_error:
+            logger.exception("TTS failed for attachment chat")
+            audio_error = type(tts_error).__name__
+        return {"reply": reply, "files": [f.filename or "attachment" for f in files],
+                "audio_base64": audio_b64, "audio_mime": "audio/mpeg", "audio_error": audio_error}
     except AttachmentError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise HTTPException(415, str(exc)) from exc
     except HTTPException:
         raise
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc
     except Exception as exc:
-        logger.exception("Attachment processing failed")
-        raise HTTPException(502, "Не удалось обработать вложения") from exc
+        logger.exception("Attachment chat failed")
+        raise HTTPException(502, "Не удалось обработать вложения.") from exc
 
 @app.post("/api/voice")
 async def voice_chat(file:UploadFile=File(...),user_id:str="mobile-owner",x_asel_secret:str|None=Header(default=None)):
