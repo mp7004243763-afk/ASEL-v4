@@ -1,0 +1,25 @@
+name: ASEL V7 attachment backend tests
+
+on:
+  push:
+    branches: [asel-v7-attachments]
+    paths:
+      - "backend/**"
+      - ".github/workflows/test-asel-v7-attachments.yml"
+  workflow_dispatch:
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Compile backend
+        run: python -m compileall -q backend
+      - name: Run backend tests
+        working-directory: backend
+        run: python -m unittest discover -s tests -v
