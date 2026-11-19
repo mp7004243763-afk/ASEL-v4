@@ -187,6 +187,56 @@ async def chat(payload:ChatRequest,x_asel_secret:str|None=Header(default=None)):
     except Exception as e:
         logger.exception("AI provider error in /api/chat")
         raise HTTPException(502,"AI provider error") from e
+
+@app.post("/api/chat/attachments")
+async def chat_attachments(
+    user_id: str,
+    message: str = "Изучи прикреплённые файлы и расскажи, что в них.",
+    files: list[UploadFile] = File(...),
+    x_asel_secret: str | None = Header(default=None),
+):
+    authorize(x_asel_secret)
+    from attachments import AttachmentError, extract_attachment, MAX_FILE_BYTES
+    from ai import ask_asel_with_attachments
+    if not files or len(files) > 5:
+        raise HTTPException(400, "Можно отправить от одного до пяти файлов.")
+    document_parts = []
+    images = []
+    total_bytes = 0
+    try:
+        for uploaded in files:
+            raw = await uploaded.read(MAX_FILE_BYTES + 1)
+            total_bytes += len(raw)
+            if len(raw) > MAX_FILE_BYTES:
+                raise HTTPException(413, "Один из файлов превышает лимит 20 МБ.")
+            if total_bytes > 25 * 1024 * 1024:
+                raise HTTPException(413, "Общий размер файлов превышает 25 МБ.")
+            filename = uploaded.filename or "attachment"
+            kind, extracted = extract_attachment(filename, raw)
+            if kind == "image":
+                images.append((filename, raw))
+            else:
+                document_parts.append(f"Файл: {filename}\\n{extracted}")
+        context = "\\n\\n".join(document_parts)
+        reply = await ask_asel_with_attachments(user_id, message, context, images)
+        import base64
+        audio_b64 = ""
+        try:
+            audio = await synthesize_speech(reply)
+            audio_b64 = base64.b64encode(audio).decode("ascii")
+        except Exception:
+            logger.exception("TTS failed in /api/chat/attachments; returning text reply")
+        return {"reply": reply, "audio_base64": audio_b64, "audio_mime": "audio/mpeg"}
+    except AttachmentError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Attachment processing failed")
+        raise HTTPException(502, "Не удалось обработать вложения") from exc
+
 @app.post("/api/voice")
 async def voice_chat(file:UploadFile=File(...),user_id:str="mobile-owner",x_asel_secret:str|None=Header(default=None)):
     authorize(x_asel_secret); audio=await file.read()
