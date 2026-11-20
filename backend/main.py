@@ -12,6 +12,7 @@ from db import (init_db, add_memory, list_memories, delete_memory, add_reminder,
                 add_event, list_events, delete_event, create_link_code, redeem_link_code, get_history, database_status)
 from ai import ask_asel
 from voice import transcribe_audio, synthesize_speech
+from gemini_tts import list_gemini_voices, synthesize_gemini_preview
 from google_calendar import (init_google_calendar_db, create_authorization_url, finish_authorization,
     connection_status, list_google_events, create_google_event, update_google_event, delete_google_event)
 
@@ -394,3 +395,42 @@ async def google_calendar_delete_event(event_id: str, user_id: str,
                                        x_asel_secret: str | None = Header(default=None)):
     authorize(x_asel_secret)
     return delete_google_event(user_id, event_id)
+
+
+# Gemini TTS diagnostics. These endpoints are protected by the existing ASEL
+# secret and do not switch the production voice provider.
+class GeminiVoicePreviewRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    voice_id: str = Field(min_length=1, max_length=200)
+
+
+@app.get("/api/voice/gemini/voices")
+async def gemini_voice_catalog(search: str = "Lyra",
+                               x_asel_secret: str | None = Header(default=None)):
+    authorize(x_asel_secret)
+    try:
+        voices = await list_gemini_voices(search)
+        return {"items": voices, "count": len(voices), "search": search}
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Gemini voice catalogue lookup failed")
+        raise HTTPException(502, "Не удалось получить каталог голосов Gemini") from exc
+
+
+@app.post("/api/voice/gemini/preview")
+async def gemini_voice_preview(p: GeminiVoicePreviewRequest,
+                               x_asel_secret: str | None = Header(default=None)):
+    authorize(x_asel_secret)
+    try:
+        audio = await synthesize_gemini_preview(p.text, p.voice_id)
+        import base64
+        return {"audio_base64": base64.b64encode(audio).decode("ascii"),
+                "audio_mime": "audio/wav", "voice_id": p.voice_id}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Gemini voice preview failed")
+        raise HTTPException(502, "Не удалось создать тестовую озвучку Gemini") from exc
